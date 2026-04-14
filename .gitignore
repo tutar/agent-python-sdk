@@ -5,4 +5,6 @@ __pycache__/
 .ruff_cache/
 dist/
 build/
+node_modules/
+frontend/terminal-tui/node_modules/
 todo.md

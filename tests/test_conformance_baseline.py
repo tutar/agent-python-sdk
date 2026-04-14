@@ -3,8 +3,21 @@ from pathlib import Path
 from typing import Any
 
 from openagent.harness import ModelTurnRequest, ModelTurnResponse, SimpleHarness
-from openagent.object_model import RuntimeEventType, TerminalStatus, ToolResult
-from openagent.session import FileSessionStore, InMemorySessionStore, SessionStatus
+from openagent.memory import FileMemoryStore
+from openagent.object_model import JsonObject, RuntimeEventType, TerminalStatus, ToolResult
+from openagent.orchestration import (
+    BackgroundTaskContext,
+    InMemoryTaskManager,
+    LocalBackgroundAgentOrchestrator,
+)
+from openagent.sandbox import LocalSandbox, SandboxExecutionRequest
+from openagent.session import (
+    FileSessionStore,
+    InMemorySessionStore,
+    SessionMessage,
+    SessionRecord,
+    SessionStatus,
+)
 from openagent.tools import PermissionDecision, SimpleToolExecutor, StaticToolRegistry, ToolCall
 
 
@@ -155,3 +168,168 @@ def test_conformance_session_resume(tmp_path: Path) -> None:
         "second",
         "second reply",
     ]
+
+
+def test_conformance_sandbox_deny() -> None:
+    sandbox = LocalSandbox(allowed_command_prefixes=["python"])
+    negotiation = sandbox.negotiate(
+        SandboxExecutionRequest(
+            command=["bash", "-lc", "echo no"],
+            requires_network=True,
+        )
+    )
+
+    assert negotiation.allowed is False
+    assert "Command is not allowed by sandbox policy: bash" in negotiation.reasons
+    assert "Network access is not available in this sandbox" in negotiation.reasons
+
+    try:
+        sandbox.execute(
+            SandboxExecutionRequest(
+                command=["bash", "-lc", "echo no"],
+                requires_network=True,
+            )
+        )
+    except PermissionError as exc:
+        assert "Command is not allowed by sandbox policy: bash" in str(exc)
+    else:
+        raise AssertionError("Expected PermissionError")
+
+
+def test_conformance_mcp_tool_adaptation() -> None:
+    from openagent.tools import (
+        InMemoryMcpClient,
+        McpPromptAdapter,
+        McpPromptDescriptor,
+        McpResourceDescriptor,
+        McpServerConnection,
+        McpServerDescriptor,
+        McpSkillAdapter,
+        McpToolAdapter,
+        McpToolDescriptor,
+    )
+
+    client = InMemoryMcpClient()
+    client.connect(
+        McpServerConnection(
+            descriptor=McpServerDescriptor(server_id="docs", label="Docs Server"),
+            tools={
+                "echo": (
+                    McpToolDescriptor(name="echo", description="Echo text"),
+                    lambda args: ToolResult(
+                        tool_name="echo",
+                        success=True,
+                        content=[str(args["text"])],
+                    ),
+                )
+            },
+            prompts={
+                "review": McpPromptDescriptor(
+                    name="review",
+                    description="Review prompt",
+                    template="Review {topic}",
+                )
+            },
+            resources={
+                "skill://summarize": McpResourceDescriptor(
+                    uri="skill://summarize",
+                    name="Summarize",
+                    description="Summarize notes",
+                    content="Summarize {topic}",
+                )
+            },
+        )
+    )
+
+    adapted_tool = McpToolAdapter().adapt_mcp_tool("docs", client.list_tools("docs")[0])
+    adapted_prompt = McpPromptAdapter().adapt_mcp_prompt("docs", client.list_prompts("docs")[0])
+    adapted_skill = McpSkillAdapter().adapt_mcp_skill(
+        "docs",
+        McpSkillAdapter().discover_skills_from_resources("docs", client.list_resources("docs"))[0],
+    )
+    result = client.call_tool("docs", "echo", {"text": "hello"})
+
+    assert adapted_tool.name == "echo"
+    assert adapted_prompt.kind.value == "prompt"
+    assert adapted_prompt.source == "mcp_prompt"
+    assert adapted_skill.id == "summarize"
+    assert adapted_skill.metadata["server_id"] == "docs"
+    assert result.content == ["hello"]
+
+
+def test_conformance_memory_recall_and_consolidation(tmp_path: Path) -> None:
+    store = InMemorySessionStore()
+    memory_store = FileMemoryStore(tmp_path / "memory")
+    harness = SimpleHarness(
+        model=ScriptedModel([ModelTurnResponse(assistant_message="stored")]),
+        sessions=store,
+        tools=StaticToolRegistry([]),
+        executor=SimpleToolExecutor(StaticToolRegistry([])),
+        memory_store=memory_store,
+    )
+
+    harness.run_turn("Remember that the launch code is sunrise", "case_memory")
+    session = store.load_session("case_memory")
+    consolidation = memory_store.consolidate("case_memory", session.messages)
+
+    request = harness.build_model_input(
+        SessionRecord(
+            session_id="case_memory",
+            messages=[SessionMessage(role="user", content="What is the launch code?")],
+        ),
+        [],
+    )
+
+    restored_memory_store = FileMemoryStore(tmp_path / "memory")
+    restored_harness = SimpleHarness(
+        model=ScriptedModel([ModelTurnResponse(assistant_message="restored")]),
+        sessions=store,
+        tools=StaticToolRegistry([]),
+        executor=SimpleToolExecutor(StaticToolRegistry([])),
+        memory_store=restored_memory_store,
+    )
+    restored_request = restored_harness.build_model_input(
+        SessionRecord(
+            session_id="case_memory",
+            messages=[SessionMessage(role="user", content="launch code?")],
+        ),
+        [],
+    )
+
+    assert consolidation.new_records
+    assert request.memory_context
+    assert "sunrise" in str(request.memory_context[0]["content"])
+    assert request.messages == [{"role": "user", "content": "What is the launch code?"}]
+    assert restored_request.memory_context
+    assert "sunrise" in str(restored_request.memory_context[0]["content"])
+
+
+def test_conformance_background_agent() -> None:
+    manager = InMemoryTaskManager()
+    orchestrator = LocalBackgroundAgentOrchestrator(manager)
+
+    def worker(context: BackgroundTaskContext) -> JsonObject:
+        context.progress({"message": "started"})
+        context.checkpoint({"step": "summary"})
+        return {"output_ref": "memory://tasks/summary"}
+
+    handle = orchestrator.start_background_task(
+        "summarize repo",
+        worker,
+    )
+
+    initial_events = orchestrator.list_events(handle.task_id)
+    assert initial_events[0].event_type.value == "task_created"
+
+    for _ in range(20):
+        task = orchestrator.get_task(handle.task_id)
+        if task.status is TerminalStatus.COMPLETED:
+            break
+
+    events = orchestrator.list_events(handle.task_id)
+    task = orchestrator.get_task(handle.task_id)
+
+    assert any(event.event_type.value == "task_progress" for event in events)
+    assert events[-1].event_type.value == "task_completed"
+    assert task.output_ref == "memory://tasks/summary"
+    assert task.status is TerminalStatus.COMPLETED

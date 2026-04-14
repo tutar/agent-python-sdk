@@ -8,6 +8,9 @@ from openagent.object_model import RuntimeEvent, TerminalState, ToolResult
 
 
 class Harness(Protocol):
+    def run_turn_stream(self, input: Any, session_handle: Any) -> Any:
+        """Run a turn and yield the runtime event stream."""
+
     def run_turn(self, input: Any, session_handle: Any) -> tuple[list[RuntimeEvent], TerminalState]:
         """Run a turn and return emitted events plus the terminal state."""
 

@@ -1,9 +1,10 @@
-"""Static MCP protocol compatibility baseline."""
+"""MCP compatibility layer with deterministic and transport-backed seams."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Protocol
 
 from openagent.object_model import JsonObject, JsonValue, SerializableModel, ToolResult
 from openagent.tools.commands import Command, CommandKind, CommandVisibility
@@ -49,8 +50,28 @@ class McpServerConnection:
     resources: dict[str, McpResourceDescriptor] = field(default_factory=dict)
 
 
-class InMemoryMcpClient:
-    """Minimal MCP client for deterministic local tests."""
+class McpTransport(Protocol):
+    def list_tools(self, server_id: str) -> list[McpToolDescriptor]:
+        """List remote MCP tools."""
+
+    def list_prompts(self, server_id: str) -> list[McpPromptDescriptor]:
+        """List remote MCP prompts."""
+
+    def list_resources(self, server_id: str) -> list[McpResourceDescriptor]:
+        """List remote MCP resources."""
+
+    def call_tool(self, server_id: str, tool_name: str, input: JsonObject) -> ToolResult:
+        """Invoke a remote MCP tool."""
+
+    def get_prompt(self, server_id: str, prompt_name: str, args: JsonObject) -> str:
+        """Render a remote MCP prompt."""
+
+    def read_resource(self, server_id: str, resource_uri: str) -> McpResourceDescriptor:
+        """Read a remote MCP resource."""
+
+
+class InMemoryMcpTransport:
+    """Deterministic local transport used by tests and offline development."""
 
     def __init__(self) -> None:
         self._servers: dict[str, McpServerConnection] = {}
@@ -81,6 +102,45 @@ class InMemoryMcpClient:
 
     def read_resource(self, server_id: str, resource_uri: str) -> McpResourceDescriptor:
         return self._servers[server_id].resources[resource_uri]
+
+
+class TransportBackedMcpClient:
+    """Delegate MCP operations to a transport implementation."""
+
+    def __init__(self, transport: McpTransport) -> None:
+        self._transport = transport
+
+    def list_tools(self, server_id: str) -> list[McpToolDescriptor]:
+        return self._transport.list_tools(server_id)
+
+    def list_prompts(self, server_id: str) -> list[McpPromptDescriptor]:
+        return self._transport.list_prompts(server_id)
+
+    def list_resources(self, server_id: str) -> list[McpResourceDescriptor]:
+        return self._transport.list_resources(server_id)
+
+    def call_tool(self, server_id: str, tool_name: str, input: JsonObject) -> ToolResult:
+        return self._transport.call_tool(server_id, tool_name, input)
+
+    def get_prompt(self, server_id: str, prompt_name: str, args: JsonObject) -> str:
+        return self._transport.get_prompt(server_id, prompt_name, args)
+
+    def read_resource(self, server_id: str, resource_uri: str) -> McpResourceDescriptor:
+        return self._transport.read_resource(server_id, resource_uri)
+
+
+class InMemoryMcpClient(TransportBackedMcpClient):
+    """Minimal MCP client for deterministic local tests."""
+
+    def __init__(self, transport: InMemoryMcpTransport | None = None) -> None:
+        self._transport_impl = transport or InMemoryMcpTransport()
+        super().__init__(self._transport_impl)
+
+    def connect(self, server: McpServerConnection) -> McpServerDescriptor:
+        return self._transport_impl.connect(server)
+
+    def disconnect(self, server_id: str) -> None:
+        self._transport_impl.disconnect(server_id)
 
 
 class McpToolAdapter:

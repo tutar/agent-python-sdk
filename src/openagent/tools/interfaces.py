@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Any, Protocol
 
-from openagent.object_model import ToolResult
-from openagent.tools.models import ToolCall, ToolExecutionContext
+from openagent.object_model import RuntimeEvent, ToolResult
+from openagent.tools.models import (
+    ToolCall,
+    ToolExecutionContext,
+    ToolPolicyOutcome,
+    ToolStreamItem,
+)
 
 
 class ToolDefinition(Protocol):
@@ -25,6 +31,15 @@ class ToolDefinition(Protocol):
         """Return whether this tool can run concurrently."""
 
 
+class StreamingToolDefinition(ToolDefinition, Protocol):
+    def stream_call(
+        self,
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+    ) -> Iterator[ToolStreamItem]:
+        """Execute the tool with incremental progress and final result."""
+
+
 class ToolRegistry(Protocol):
     def list_tools(self) -> list[ToolDefinition]:
         """List registered tools."""
@@ -36,7 +51,24 @@ class ToolRegistry(Protocol):
         """Return visible tools for the current policy and runtime state."""
 
 
+class ToolPolicyEngine(Protocol):
+    def evaluate(
+        self,
+        tool: ToolDefinition,
+        tool_call: ToolCall,
+        context: ToolExecutionContext,
+    ) -> ToolPolicyOutcome:
+        """Return the effective policy outcome for the tool call."""
+
+
 class ToolExecutor(Protocol):
+    def run_tool_stream(
+        self,
+        tool_calls: list[ToolCall],
+        context: ToolExecutionContext,
+    ) -> Iterator[RuntimeEvent]:
+        """Run tools and yield tool lifecycle events."""
+
     def run_tools(
         self,
         tool_calls: list[ToolCall],

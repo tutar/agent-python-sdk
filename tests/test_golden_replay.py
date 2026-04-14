@@ -3,9 +3,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
+from openagent.context_governance import ContextGovernance
 from openagent.harness import ModelTurnRequest, ModelTurnResponse, SimpleHarness
+from openagent.memory import FileMemoryStore
 from openagent.object_model import RuntimeEvent, RuntimeEventType, TerminalStatus, ToolResult
-from openagent.session import FileSessionStore, InMemorySessionStore, SessionStatus
+from openagent.session import (
+    FileSessionStore,
+    InMemorySessionStore,
+    SessionMessage,
+    SessionRecord,
+    SessionStatus,
+)
 from openagent.tools import PermissionDecision, SimpleToolExecutor, StaticToolRegistry, ToolCall
 
 GOLDEN_DIR = Path(__file__).resolve().parents[2] / "agent-sdk-spec" / "conformance" / "golden"
@@ -169,3 +177,180 @@ def test_session_resume_matches_golden(tmp_path: Path) -> None:
     assert restored.messages[-2].content == "second"
     assert restored.messages[-1].content == "second reply"
     assert golden["requirements"][0] == "session id remains stable across restore"
+
+
+def test_memory_recall_and_consolidation_matches_golden(tmp_path: Path) -> None:
+    golden = _load_golden("memory-recall-and-consolidation.json")
+    memory_store = FileMemoryStore(tmp_path / "memory")
+    consolidation = memory_store.consolidate(
+        "golden_memory",
+        [
+            SessionMessage(role="user", content="Remember my favorite city is Hangzhou"),
+            SessionMessage(
+                role="assistant",
+                content="I'll remember that your favorite city is Hangzhou.",
+            ),
+        ],
+    )
+    harness = SimpleHarness(
+        model=ScriptedModel([ModelTurnResponse(assistant_message="ok")]),
+        sessions=InMemorySessionStore(),
+        tools=StaticToolRegistry([]),
+        executor=SimpleToolExecutor(StaticToolRegistry([])),
+        memory_store=memory_store,
+    )
+
+    request = harness.build_model_input(
+        SessionRecord(
+            session_id="golden_memory",
+            messages=[SessionMessage(role="user", content="What is my favorite city?")],
+        ),
+        [],
+    )
+    restored_store = FileMemoryStore(tmp_path / "memory")
+    restored_harness = SimpleHarness(
+        model=ScriptedModel([ModelTurnResponse(assistant_message="ok")]),
+        sessions=InMemorySessionStore(),
+        tools=StaticToolRegistry([]),
+        executor=SimpleToolExecutor(StaticToolRegistry([])),
+        memory_store=restored_store,
+    )
+    restored_request = restored_harness.build_model_input(
+        SessionRecord(
+            session_id="golden_memory",
+            messages=[SessionMessage(role="user", content="favorite city?")],
+        ),
+        [],
+    )
+
+    assert consolidation.new_records
+    assert request.memory_context
+    assert request.messages == [{"role": "user", "content": "What is my favorite city?"}]
+    assert restored_request.memory_context
+    assert (
+        golden["constraints"][0]
+        == "recalled memory enters context assembly rather than transcript rewrite"
+    )
+
+
+def test_prompt_cache_stable_prefix_matches_golden() -> None:
+    golden = _load_golden("prompt-cache-stable-prefix.json")
+    governance = ContextGovernance()
+    first_messages = [
+        SessionMessage(role="system", content="stay concise"),
+        SessionMessage(role="user", content="static topic"),
+        SessionMessage(role="assistant", content="dynamic one"),
+        SessionMessage(role="user", content="dynamic two"),
+    ]
+    second_messages = [
+        SessionMessage(role="system", content="stay concise"),
+        SessionMessage(role="user", content="static topic"),
+        SessionMessage(role="assistant", content="dynamic one updated"),
+        SessionMessage(role="user", content="dynamic two updated"),
+    ]
+
+    first = governance.snapshot_prompt_cache(first_messages, ["echo"])
+    second = governance.snapshot_prompt_cache(second_messages, ["echo"])
+
+    assert first.stable_prefix_key == second.stable_prefix_key
+    assert golden["constraints"][0] == (
+        "stable prefix remains unchanged across turns that only modify dynamic suffix"
+    )
+
+
+def test_prompt_cache_dynamic_suffix_matches_golden() -> None:
+    golden = _load_golden("prompt-cache-dynamic-suffix.json")
+    governance = ContextGovernance()
+    first_messages = [
+        SessionMessage(role="system", content="stay concise"),
+        SessionMessage(role="user", content="static topic"),
+        SessionMessage(role="assistant", content="dynamic one"),
+        SessionMessage(role="user", content="dynamic two"),
+    ]
+    second_messages = [
+        SessionMessage(role="system", content="stay concise"),
+        SessionMessage(role="user", content="static topic"),
+        SessionMessage(role="assistant", content="dynamic one updated"),
+        SessionMessage(role="user", content="dynamic two updated"),
+    ]
+
+    first = governance.snapshot_prompt_cache(first_messages, ["echo"])
+    second = governance.snapshot_prompt_cache(second_messages, ["echo"])
+
+    assert first.dynamic_suffix_key != second.dynamic_suffix_key
+    assert golden["constraints"][1] == "dynamic context must not be modeled as transcript rewrite"
+
+
+def test_prompt_cache_break_detection_matches_golden() -> None:
+    golden = _load_golden("prompt-cache-break-detection.json")
+    governance = ContextGovernance()
+    messages = [
+        SessionMessage(role="system", content="stay concise"),
+        SessionMessage(role="user", content="topic"),
+        SessionMessage(role="assistant", content="reply"),
+    ]
+    previous = governance.snapshot_prompt_cache(messages, ["echo"], ttl_bucket="1h")
+    current = governance.snapshot_prompt_cache(messages, ["echo"], ttl_bucket="5m")
+    break_result = governance.detect_cache_break(previous, current)
+
+    assert break_result.break_detected is True
+    assert break_result.reason in golden["valid_reasons"]
+    assert golden["constraints"][0] == "cache break remains structurally identifiable"
+
+
+def test_prompt_cache_fork_sharing_matches_golden() -> None:
+    golden = _load_golden("prompt-cache-fork-sharing.json")
+    governance = ContextGovernance()
+    parent = governance.snapshot_prompt_cache(
+        [
+            SessionMessage(role="system", content="stay concise"),
+            SessionMessage(role="user", content="static topic"),
+            SessionMessage(role="assistant", content="parent dynamic"),
+        ],
+        ["echo"],
+        ttl_bucket="1h",
+        model_identity="gpt-local",
+    )
+    child = governance.fork_prompt_cache(
+        parent,
+        [SessionMessage(role="user", content="child dynamic suffix")],
+        skip_cache_write=True,
+    )
+
+    assert child.stable_prefix_key == parent.stable_prefix_key
+    assert child.tool_surface_key == parent.tool_surface_key
+    assert child.ttl_bucket == parent.ttl_bucket
+    assert child.model_identity == parent.model_identity
+    assert child.skip_cache_write is True
+    assert golden["constraints"][0] == "fork child inherits cache-critical parameters from parent"
+
+
+def test_prompt_cache_strategy_equivalence_matches_golden() -> None:
+    golden = _load_golden("prompt-cache-strategy-equivalence.json")
+    governance = ContextGovernance()
+    messages = [
+        SessionMessage(role="system", content="stay concise"),
+        SessionMessage(role="user", content="static topic"),
+        SessionMessage(role="assistant", content="dynamic one"),
+        SessionMessage(role="user", content="dynamic two"),
+    ]
+    strategies = ["anthropic_native", "openclaw_mediated", "fallback"]
+    snapshots = [
+        governance.snapshot_prompt_cache_with_strategy(messages, ["echo"], strategy)
+        for strategy in strategies
+    ]
+
+    assert (
+        snapshots[0].stable_prefix_key
+        == snapshots[1].stable_prefix_key
+        == snapshots[2].stable_prefix_key
+    )
+    assert (
+        snapshots[0].tool_surface_key
+        == snapshots[1].tool_surface_key
+        == snapshots[2].tool_surface_key
+    )
+    assert (
+        golden["constraints"][1]
+        == "strategy changes do not force upper-layer behavior drift"
+    )

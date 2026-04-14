@@ -11,6 +11,12 @@
 - 提供跨语言 canonical object model 的 Python 占位实现
 - 为后续 `TUI-first` 的装配与行为实现预留稳定入口
 
+## Docs
+
+- [Get Started](./docs/get-started.md)
+- [Features](./docs/features.md)
+- [Developer Guide](./docs/developer-guide/README.md)
+
 ## Layout
 
 - `src/openagent/object_model/`: canonical objects and schema envelope
@@ -34,7 +40,12 @@
 - `orchestration`
 - `object_model`
 
-`TUI / Desktop / Cloud` 的差异不体现在顶层源码目录拆分上，而是通过 `profiles` 中的宿主装配层表达。当前仅预留 `TUI-first` 的 profile 入口。
+当前 Python SDK 只面向 `TUI / Desktop` 本地场景，不考虑 `Cloud`。模块之间默认使用同进程直接函数调用，
+优先降低复杂度和调用开销，而不是为远程绑定或 IPC 预留抽象成本。
+
+`frontend/` 目录现在位于 `agent-python-sdk/` 内。terminal TUI 采用 `React + Ink + Yoga`，
+terminal TUI 和 desktop 前端都应通过 gateway 使用 agent runtime，而不是直接持有 harness。
+因此 Python SDK 当前推荐的集成入口是 `profile.create_gateway(...)`。
 
 ## Development
 
@@ -47,6 +58,14 @@ uv run mypy .
 ```
 
 当前本地开发环境基线是 `Python 3.11.15`。
+
+Terminal TUI 前端还需要一个本地 Node 运行时。启动方式：
+
+```bash
+cd frontend/terminal-tui
+npm install
+npm run dev
+```
 
 ## Development Standards
 

@@ -6,6 +6,7 @@ from openagent.sandbox.models import (
     SandboxCapabilityView,
     SandboxExecutionRequest,
     SandboxExecutionResult,
+    SandboxNegotiationResult,
 )
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "SandboxCapabilityView",
     "SandboxExecutionRequest",
     "SandboxExecutionResult",
+    "SandboxNegotiationResult",
 ]

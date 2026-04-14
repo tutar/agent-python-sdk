@@ -22,3 +22,21 @@ class ToolPermissionDeniedError(Exception, SerializableModel):
 
     def __str__(self) -> str:
         return f"{self.tool_name}: {self.reason}"
+
+
+@dataclass(slots=True)
+class ToolExecutionFailedError(Exception, SerializableModel):
+    tool_name: str
+    reason: str
+
+    def __str__(self) -> str:
+        return f"{self.tool_name}: {self.reason}"
+
+
+@dataclass(slots=True)
+class ToolCancelledError(Exception, SerializableModel):
+    tool_name: str
+    reason: str = "cancelled"
+
+    def __str__(self) -> str:
+        return f"{self.tool_name}: {self.reason}"

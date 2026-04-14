@@ -1,0 +1,232 @@
+# Features
+
+这份文档描述当前 `openagent` Python SDK 已经落地的能力边界，不讨论未来规划。
+
+## Runtime
+
+当前 runtime 是本地、同进程、低复杂度实现。
+
+已支持：
+
+- `SimpleHarness` turn execution
+- `run_turn_stream(...)`
+- `turn_started`
+- `assistant_delta`
+- `assistant_message`
+- `tool_started`
+- `tool_progress`
+- `tool_failed`
+- `tool_cancelled`
+- `tool_result`
+- `requires_action`
+- `turn_completed`
+- `turn_failed`
+- 审批后的 `continue_turn(...)`
+- single-shot `generate(...)`
+- streaming `stream_generate(...)`
+- turn-level cancellation baseline
+- timeout baseline
+- retry baseline
+
+当前不支持：
+
+- model token streaming
+- tool-aware cancellation recovery
+- full retry policy customization
+- full timeout semantics for every streaming backend
+
+## Session
+
+当前 session 子系统支持本地内存和文件两种存储。
+
+已支持：
+
+- `InMemorySessionStore`
+- `FileSessionStore`
+- append-only event log baseline
+- session checkpoint baseline
+- session cursor baseline
+- restore marker baseline
+- wake / resume snapshot baseline
+- event replay baseline
+- approval continuation state
+- terminal TUI 的多 session 切换与 replay
+- durable memory recall baseline via `memory_context`
+
+当前不支持：
+
+- 分支化 event log
+- 更完整的 wake / restore mode 设计
+
+## Context Governance
+
+当前 context governance 已支持：
+
+- token estimate baseline
+- warning threshold
+- continuation budget planning
+- recommended output-token reservation
+- proactive compact
+- reactive overflow recovery
+- long tool result externalization
+- prompt-cache-aware shaping baseline
+- provider cache key baseline
+- prompt-cache stable-prefix / dynamic-suffix baseline
+- prompt-cache break detection baseline
+- prompt-cache fork-sharing baseline
+- prompt-cache strategy-equivalence baseline
+- harness-level `last_context_report`
+
+当前不支持：
+
+- provider-native prompt cache integration
+- model-specific token accounting
+
+## Tools
+
+当前 tools 子系统支持：
+
+- `StaticToolRegistry`
+- `SimpleToolExecutor`
+- 完整的本地 tool event stream baseline
+- `tool_started / tool_progress / tool_result / tool_failed / tool_cancelled`
+- per-tool permission: `allow / deny / ask`
+- `RuleBasedToolPolicyEngine`
+- approval continuation
+- concurrency-safe tool 的并发执行 baseline
+
+当前不支持：
+
+- 更细的 tool retry / recovery policy
+
+## Capability Surface
+
+当前 capability surface 支持：
+
+- capability origin metadata baseline
+- capability descriptor projection
+- `list_capabilities(...)`
+- `list_command_surface(...)`
+- `resolve_capability(...)`
+- `project_for_host(...)`
+- model-visible / user-visible filtering
+- host projection for `tui` vs `desktop`
+
+## Ecosystem Compatibility
+
+当前已经有三类兼容层：
+
+- Commands
+- Skills
+- MCP baseline
+
+具体包括：
+
+- `StaticCommandRegistry`
+- `FileSkillRegistry`
+- `SkillActivator`
+- `SkillInvocationBridge`
+- `InMemoryMcpClient`
+- `TransportBackedMcpClient`
+- `InMemoryMcpTransport`
+- `McpToolAdapter`
+- `McpPromptAdapter`
+- `McpSkillAdapter`
+- MCP tool/prompt/skill conformance baseline
+
+当前 MCP 已经有 transport-backed client seam，但默认 deterministic transport 仍然是本地内存实现。
+
+## Memory
+
+当前 memory 子系统支持：
+
+- `InMemoryMemoryStore`
+- `FileMemoryStore`
+- transcript-to-durable-memory consolidation baseline
+- recall into `ModelTurnRequest.memory_context`
+- restart-safe durable memory recall
+
+当前不支持：
+
+- cross-session dream consolidation
+- richer extraction policy
+- background consolidation scheduling
+
+## Gateway
+
+gateway 是 frontend 的稳定接入边界。
+
+当前支持：
+
+- inbound normalization
+- session binding
+- file-backed session binding persistence
+- binding-level session checkpoint tracking
+- user message processing
+- permission continuation
+- interrupt control
+- mode change control routing baseline
+- projected event filtering
+- session replay observation
+
+frontend 当前应通过 `IngressGateway` 使用 agent，不应该直接持有 harness。
+
+## Terminal TUI
+
+terminal TUI 当前基于 `React + Ink + Yoga`。
+
+已支持：
+
+- 本地 bridge 启动
+- 多 session 创建和切换
+- 消息发送
+- tool demo
+- requires_action 审批
+- 事件日志面板
+- session 状态面板
+- 非 TTY 环境下的安全降级
+
+命令包括：
+
+- `/new <name>`
+- `/switch <name>`
+- `/sessions`
+- `/approve`
+- `/reject`
+- `/interrupt`
+- `/session`
+- `/clear`
+- `/help`
+- `/exit`
+
+## Orchestration
+
+当前 orchestration 支持本地 baseline：
+
+- generic task
+- background task handle
+- verifier task handle
+- local background agent orchestrator
+- checkpoint
+- complete
+- fail
+- file-backed task persistence
+- restart-safe task/handle recovery
+
+## Sandbox
+
+当前 sandbox 是本地 allowlist baseline。
+
+已支持：
+
+- `LocalSandbox`
+- 命令前缀 allowlist
+- capability negotiation
+- network / filesystem / credential deny reasons
+- 本地测试场景执行
+
+当前不支持：
+
+- 更细的凭证边界
+- 更细的网络边界
+- provider-specific sandbox capability negotiation

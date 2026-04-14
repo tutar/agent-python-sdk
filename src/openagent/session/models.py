@@ -22,6 +22,7 @@ class SessionRecord(SerializableModel):
     messages: list[SessionMessage] = field(default_factory=list)
     events: list[RuntimeEvent] = field(default_factory=list)
     pending_tool_calls: list[ToolCall] = field(default_factory=list)
+    restore_marker: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, JsonValue]) -> SessionRecord:
@@ -47,4 +48,38 @@ class SessionRecord(SerializableModel):
                 for tool_call in raw_pending
                 if isinstance(tool_call, dict)
             ],
+            restore_marker=str(data["restore_marker"])
+            if data.get("restore_marker") is not None
+            else None,
         )
+
+
+@dataclass(slots=True)
+class SessionCursor(SerializableModel):
+    session_id: str
+    event_offset: int
+    last_event_id: str | None = None
+
+
+@dataclass(slots=True)
+class SessionCheckpoint(SerializableModel):
+    session_id: str
+    event_offset: int
+    last_event_id: str | None = None
+    cursor: SessionCursor | None = None
+    committed_at: str | None = None
+
+
+@dataclass(slots=True)
+class WakeRequest(SerializableModel):
+    session_id: str
+    cursor: SessionCursor | None = None
+    restore_mode: str = "latest"
+
+
+@dataclass(slots=True)
+class ResumeSnapshot(SerializableModel):
+    session_id: str
+    runtime_state: dict[str, JsonValue]
+    transcript_slice: list[dict[str, JsonValue]] = field(default_factory=list)
+    working_state: dict[str, JsonValue] = field(default_factory=dict)

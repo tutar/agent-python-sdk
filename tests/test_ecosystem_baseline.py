@@ -6,6 +6,7 @@ from openagent.tools import (
     CommandVisibility,
     FileSkillRegistry,
     InMemoryMcpClient,
+    InMemoryMcpTransport,
     McpPromptAdapter,
     McpPromptDescriptor,
     McpResourceDescriptor,
@@ -16,6 +17,7 @@ from openagent.tools import (
     SkillActivator,
     SkillInvocationBridge,
     StaticCommandRegistry,
+    TransportBackedMcpClient,
 )
 
 
@@ -119,3 +121,42 @@ def test_in_memory_mcp_client_and_adapters() -> None:
     adapted_skill = skill_adapter.adapt_mcp_skill("docs", discovered_skills[0])
     assert adapted_skill.id == "summarize"
     assert adapted_skill.metadata["server_id"] == "docs"
+
+
+def test_transport_backed_mcp_client_uses_transport_seam() -> None:
+    transport = InMemoryMcpTransport()
+    transport.connect(
+        McpServerConnection(
+            descriptor=McpServerDescriptor(server_id="docs", label="Docs Server"),
+            tools={
+                "echo": (
+                    McpToolDescriptor(name="echo", description="Echo text"),
+                    _echo_tool,
+                )
+            },
+            prompts={
+                "review": McpPromptDescriptor(
+                    name="review",
+                    description="Review a document",
+                    template="Review {topic}",
+                )
+            },
+            resources={
+                "skill://summarize": McpResourceDescriptor(
+                    uri="skill://summarize",
+                    name="Summarize",
+                    description="Summarize a document",
+                    content="Summarize {topic}",
+                )
+            },
+        )
+    )
+    client = TransportBackedMcpClient(transport)
+
+    result = client.call_tool("docs", "echo", {"text": "hello"})
+    rendered_prompt = client.get_prompt("docs", "review", {"topic": "api"})
+    resource = client.read_resource("docs", "skill://summarize")
+
+    assert result.content == ["hello"]
+    assert rendered_prompt == "Review api"
+    assert resource.uri == "skill://summarize"

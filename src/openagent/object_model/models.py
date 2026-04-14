@@ -100,6 +100,27 @@ class TaskRecord(SerializableModel):
     end_time: str | None = None
     metadata: JsonObject | None = None
 
+    @classmethod
+    def from_dict(cls, data: JsonObject) -> TaskRecord:
+        raw_status = str(data["status"])
+        try:
+            status: TerminalStatus | str = TerminalStatus(raw_status)
+        except ValueError:
+            status = raw_status
+        metadata = data.get("metadata")
+        return cls(
+            task_id=str(data["task_id"]),
+            type=str(data["type"]),
+            status=status,
+            description=str(data["description"]),
+            start_time=str(data["start_time"]),
+            session_id=str(data["session_id"]) if data.get("session_id") is not None else None,
+            agent_id=str(data["agent_id"]) if data.get("agent_id") is not None else None,
+            output_ref=str(data["output_ref"]) if data.get("output_ref") is not None else None,
+            end_time=str(data["end_time"]) if data.get("end_time") is not None else None,
+            metadata=dict(metadata) if isinstance(metadata, dict) else None,
+        )
+
 
 @dataclass(slots=True)
 class SchemaEnvelope(SerializableModel):

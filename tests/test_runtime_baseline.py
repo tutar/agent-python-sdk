@@ -1,6 +1,14 @@
+import time
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 
-from openagent.harness import ModelTurnRequest, ModelTurnResponse, SimpleHarness
+from openagent.harness import (
+    ModelStreamEvent,
+    ModelTurnRequest,
+    ModelTurnResponse,
+    SimpleHarness,
+    TurnControl,
+)
 from openagent.object_model import JsonObject, RuntimeEventType, TerminalStatus, ToolResult
 from openagent.session import InMemorySessionStore
 from openagent.tools import (
@@ -44,6 +52,42 @@ class ScriptedModel:
     def generate(self, request: ModelTurnRequest) -> ModelTurnResponse:
         del request
         return self.responses.pop(0)
+
+
+@dataclass(slots=True)
+class StreamingScriptedModel:
+    chunks: list[ModelStreamEvent]
+
+    def generate(self, request: ModelTurnRequest) -> ModelTurnResponse:
+        del request
+        raise AssertionError("Streaming path should use stream_generate")
+
+    def stream_generate(self, request: ModelTurnRequest) -> Iterator[ModelStreamEvent]:
+        del request
+        yield from self.chunks
+
+
+@dataclass(slots=True)
+class SleepyModel:
+    delay_seconds: float
+
+    def generate(self, request: ModelTurnRequest) -> ModelTurnResponse:
+        del request
+        time.sleep(self.delay_seconds)
+        return ModelTurnResponse(assistant_message="too late")
+
+
+@dataclass(slots=True)
+class FlakyModel:
+    failures_before_success: int
+    attempts: int = 0
+
+    def generate(self, request: ModelTurnRequest) -> ModelTurnResponse:
+        del request
+        self.attempts += 1
+        if self.attempts <= self.failures_before_success:
+            raise RuntimeError(f"boom-{self.attempts}")
+        return ModelTurnResponse(assistant_message="recovered")
 
 
 def test_simple_harness_basic_turn() -> None:
@@ -92,6 +136,112 @@ def test_simple_harness_tool_roundtrip() -> None:
     assert echo.seen_arguments == [{"text": "payload"}]
 
 
+def test_simple_harness_streaming_model_emits_deltas() -> None:
+    session_store = InMemorySessionStore()
+    tools = StaticToolRegistry([])
+    executor = SimpleToolExecutor(tools)
+    model = StreamingScriptedModel(
+        chunks=[
+            ModelStreamEvent(assistant_delta="hello "),
+            ModelStreamEvent(assistant_delta="world"),
+        ]
+    )
+    harness = SimpleHarness(model=model, sessions=session_store, tools=tools, executor=executor)
+
+    events, terminal = harness.run_turn("stream please", "sess_stream")
+
+    assert terminal.status is TerminalStatus.COMPLETED
+    assert [event.event_type for event in events] == [
+        RuntimeEventType.TURN_STARTED,
+        RuntimeEventType.ASSISTANT_DELTA,
+        RuntimeEventType.ASSISTANT_DELTA,
+        RuntimeEventType.ASSISTANT_MESSAGE,
+        RuntimeEventType.TURN_COMPLETED,
+    ]
+    assert events[3].payload["message"] == "hello world"
+
+
+def test_simple_harness_cancellation_stops_turn() -> None:
+    session_store = InMemorySessionStore()
+    tools = StaticToolRegistry([])
+    executor = SimpleToolExecutor(tools)
+    model = ScriptedModel(responses=[ModelTurnResponse(assistant_message="never emitted")])
+    harness = SimpleHarness(model=model, sessions=session_store, tools=tools, executor=executor)
+
+    events, terminal = harness.run_turn(
+        "cancel me",
+        "sess_cancelled",
+        control=TurnControl(cancellation_check=lambda: True),
+    )
+
+    assert terminal.status is TerminalStatus.STOPPED
+    assert terminal.reason == "cancelled"
+    assert [event.event_type for event in events] == [
+        RuntimeEventType.TURN_STARTED,
+        RuntimeEventType.TURN_FAILED,
+    ]
+
+
+def test_simple_harness_timeout_fails_turn() -> None:
+    session_store = InMemorySessionStore()
+    tools = StaticToolRegistry([])
+    executor = SimpleToolExecutor(tools)
+    harness = SimpleHarness(
+        model=SleepyModel(delay_seconds=0.05),
+        sessions=session_store,
+        tools=tools,
+        executor=executor,
+    )
+
+    events, terminal = harness.run_turn(
+        "wait",
+        "sess_timeout",
+        control=TurnControl(timeout_seconds=0.001),
+    )
+
+    assert terminal.status is TerminalStatus.FAILED
+    assert terminal.reason == "timeout"
+    assert terminal.retryable is True
+    assert events[-1].event_type is RuntimeEventType.TURN_FAILED
+
+
+def test_simple_harness_retries_and_recovers() -> None:
+    session_store = InMemorySessionStore()
+    tools = StaticToolRegistry([])
+    executor = SimpleToolExecutor(tools)
+    model = FlakyModel(failures_before_success=1)
+    harness = SimpleHarness(model=model, sessions=session_store, tools=tools, executor=executor)
+
+    events, terminal = harness.run_turn(
+        "retry",
+        "sess_retry_success",
+        control=TurnControl(max_retries=1),
+    )
+
+    assert model.attempts == 2
+    assert terminal.status is TerminalStatus.COMPLETED
+    assert events[-1].event_type is RuntimeEventType.TURN_COMPLETED
+
+
+def test_simple_harness_retry_exhaustion_fails_turn() -> None:
+    session_store = InMemorySessionStore()
+    tools = StaticToolRegistry([])
+    executor = SimpleToolExecutor(tools)
+    model = FlakyModel(failures_before_success=3)
+    harness = SimpleHarness(model=model, sessions=session_store, tools=tools, executor=executor)
+
+    events, terminal = harness.run_turn(
+        "retry until fail",
+        "sess_retry_fail",
+        control=TurnControl(max_retries=1),
+    )
+
+    assert model.attempts == 2
+    assert terminal.status is TerminalStatus.FAILED
+    assert terminal.reason == "retry_exhausted"
+    assert events[-1].event_type is RuntimeEventType.TURN_FAILED
+
+
 def test_simple_harness_requires_action_blocks_turn() -> None:
     privileged = FakeTool(name="admin", permission=PermissionDecision.ASK)
     session_store = InMemorySessionStore()
@@ -126,7 +276,6 @@ def test_tool_permission_denied_raises_failed_terminal_state() -> None:
 
     assert [event.event_type for event in events] == [
         RuntimeEventType.TURN_STARTED,
-        RuntimeEventType.TOOL_STARTED,
         RuntimeEventType.TURN_FAILED,
     ]
     assert terminal.status is TerminalStatus.FAILED
