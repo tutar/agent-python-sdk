@@ -34,7 +34,14 @@ from openagent.object_model import (
     TerminalStatus,
     ToolResult,
 )
-from openagent.session import SessionMessage, SessionRecord, SessionStatus, SessionStore
+from openagent.session import (
+    SessionMessage,
+    SessionRecord,
+    SessionStatus,
+    SessionStore,
+    ShortTermMemoryStore,
+    ShortTermSessionMemory,
+)
 from openagent.tools import (
     ToolCall,
     ToolCancelledError,
@@ -62,6 +69,8 @@ class SimpleHarness:
     context_governance: ContextGovernance | None = None
     last_context_report: ContextReport | None = None
     memory_store: MemoryStore | None = None
+    short_term_memory_store: ShortTermMemoryStore | None = None
+    last_memory_consolidation_job_id: str | None = None
     runtime_loop: AgentRuntime = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -153,11 +162,15 @@ class SimpleHarness:
             }
             for tool in self.tools.list_tools()
         ]
+        short_term_memory = self._load_short_term_memory(session_slice)
         return ModelTurnRequest(
             session_id=session_slice.session_id,
             messages=messages,
             available_tools=available_tools,
             tool_definitions=tool_definitions,
+            short_term_memory=(
+                short_term_memory.to_dict() if short_term_memory is not None else None
+            ),
             memory_context=memory_context,
         )
 
@@ -173,6 +186,46 @@ class SimpleHarness:
 
     def _new_session_message(self, role: str, content: str) -> SessionMessage:
         return SessionMessage(role=role, content=content)
+
+    def schedule_memory_maintenance(self, session: SessionRecord) -> None:
+        if self.short_term_memory_store is not None:
+            current_memory = self.short_term_memory_store.load(session.session_id)
+            update = self.short_term_memory_store.update(
+                session.session_id,
+                list(session.messages),
+                current_memory,
+            )
+            if update.memory is not None:
+                session.short_term_memory = update.memory.to_dict()
+        if self.memory_store is not None and session.messages:
+            job = self.memory_store.schedule(session.session_id, list(session.messages))
+            self.last_memory_consolidation_job_id = job.job_id
+
+    def stabilize_short_term_memory(
+        self,
+        session: SessionRecord,
+        timeout_ms: int = 250,
+    ) -> None:
+        if self.short_term_memory_store is None:
+            return
+        memory = self.short_term_memory_store.wait_until_stable(session.session_id, timeout_ms)
+        if memory is not None:
+            session.short_term_memory = memory.to_dict()
+
+    def _load_short_term_memory(
+        self,
+        session: SessionRecord,
+    ) -> ShortTermSessionMemory | None:
+        if self.short_term_memory_store is not None:
+            stable_memory = self.short_term_memory_store.wait_until_stable(session.session_id, 50)
+            if stable_memory is not None:
+                session.short_term_memory = stable_memory.to_dict()
+                return stable_memory
+            loaded = self.short_term_memory_store.load(session.session_id)
+            if loaded is not None:
+                session.short_term_memory = loaded.to_dict()
+                return loaded
+        return None
 
     def _message_payload(self, message: SessionMessage) -> JsonObject:
         payload = message.to_dict()
@@ -413,6 +466,8 @@ class SimpleHarness:
             ),
         )
         session.status = SessionStatus.IDLE
+        self.schedule_memory_maintenance(session)
+        self.stabilize_short_term_memory(session)
         self._persist_session(session_handle, session)
         return event
 

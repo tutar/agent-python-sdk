@@ -7,7 +7,7 @@ from openagent.harness.providers import (
 )
 from openagent.harness.providers.base import HttpResponse
 from openagent.object_model import JsonObject, ToolResult
-from openagent.session import InMemorySessionStore
+from openagent.session import InMemorySessionStore, InMemoryShortTermMemoryStore
 from openagent.tools import SimpleToolExecutor, StaticToolRegistry, ToolCall
 
 
@@ -189,6 +189,41 @@ def test_anthropic_adapter_builds_tool_payload_and_parses_tool_use() -> None:
     ]
 
 
+def test_provider_adapters_include_short_term_memory_summary() -> None:
+    openai_transport = FakeTransport(response_body={"choices": [{"message": {"content": "ok"}}]})
+    openai_adapter = OpenAIChatCompletionsModelAdapter(
+        model="gpt-test",
+        base_url="http://127.0.0.1:8001",
+        transport=openai_transport,
+    )
+    anthropic_transport = FakeTransport(response_body={"content": [{"type": "text", "text": "ok"}]})
+    anthropic_adapter = AnthropicMessagesModelAdapter(
+        model="claude-test",
+        base_url="http://127.0.0.1:8001",
+        transport=anthropic_transport,
+    )
+    request = ModelTurnRequest(
+        session_id="sess_1",
+        messages=[{"role": "user", "content": "continue"}],
+        short_term_memory={"summary": "User wants to continue the launch checklist."},
+    )
+
+    openai_adapter.generate(request)
+    anthropic_adapter.generate(request)
+
+    assert openai_transport.seen_payload is not None
+    assert anthropic_transport.seen_payload is not None
+    openai_messages = openai_transport.seen_payload["messages"]
+    assert isinstance(openai_messages, list)
+    assert openai_messages[0] == {
+        "role": "system",
+        "content": "Session continuity summary: User wants to continue the launch checklist.",
+    }
+    assert anthropic_transport.seen_payload["system"] == (
+        "Session continuity summary: User wants to continue the launch checklist."
+    )
+
+
 def test_harness_build_model_input_includes_tool_definitions() -> None:
     tool = EchoTool()
     harness = SimpleHarness(
@@ -213,6 +248,30 @@ def test_harness_build_model_input_includes_tool_definitions() -> None:
             },
         }
     ]
+
+
+def test_harness_build_model_input_includes_short_term_memory() -> None:
+    harness = SimpleHarness(
+        model=ToolThenReplyModel(responses=[ModelTurnResponse(assistant_message="ok")]),
+        sessions=InMemorySessionStore(),
+        tools=StaticToolRegistry([]),
+        executor=SimpleToolExecutor(StaticToolRegistry([])),
+        short_term_memory_store=InMemoryShortTermMemoryStore(),
+    )
+    session = harness.sessions.load_session("sess_short_term")
+    session.messages.append(
+        harness._new_session_message(role="user", content="Keep tracking the rollout")
+    )
+    session.messages.append(
+        harness._new_session_message(role="assistant", content="I am tracking it")
+    )
+
+    harness.schedule_memory_maintenance(session)
+    harness.stabilize_short_term_memory(session, timeout_ms=1000)
+    request = harness.build_model_input(session, [])
+
+    assert request.short_term_memory is not None
+    assert "rollout" in str(request.short_term_memory["summary"]).lower()
 
 
 def test_tool_results_preserve_tool_use_id_in_session_messages() -> None:

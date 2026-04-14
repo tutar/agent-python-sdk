@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from typing import cast
 
 from openagent.object_model import JsonObject, JsonValue, RuntimeEvent, SerializableModel
 from openagent.session.enums import SessionStatus
@@ -17,6 +19,27 @@ class SessionMessage(SerializableModel):
 
 
 @dataclass(slots=True)
+class ShortTermSessionMemory(SerializableModel):
+    session_id: str
+    summary: str
+    current_goal: str | None = None
+    progress: list[str] = field(default_factory=list)
+    open_questions: list[str] = field(default_factory=list)
+    risks: list[str] = field(default_factory=list)
+    constraints: list[str] = field(default_factory=list)
+    coverage_boundary: int | None = None
+    updated_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    stable: bool = True
+
+
+@dataclass(slots=True)
+class ShortTermMemoryUpdateResult(SerializableModel):
+    memory: ShortTermSessionMemory | None = None
+    scheduled: bool = False
+    stable: bool = False
+
+
+@dataclass(slots=True)
 class SessionRecord(SerializableModel):
     session_id: str
     status: SessionStatus = SessionStatus.IDLE
@@ -24,15 +47,22 @@ class SessionRecord(SerializableModel):
     events: list[RuntimeEvent] = field(default_factory=list)
     pending_tool_calls: list[ToolCall] = field(default_factory=list)
     restore_marker: str | None = None
+    short_term_memory: JsonObject | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, JsonValue]) -> SessionRecord:
         raw_messages_value = data.get("messages", [])
         raw_events_value = data.get("events", [])
         raw_pending_value = data.get("pending_tool_calls", [])
+        raw_short_term_memory = data.get("short_term_memory")
         raw_messages = raw_messages_value if isinstance(raw_messages_value, list) else []
         raw_events = raw_events_value if isinstance(raw_events_value, list) else []
         raw_pending = raw_pending_value if isinstance(raw_pending_value, list) else []
+        short_term_memory = (
+            cast(JsonObject, raw_short_term_memory)
+            if isinstance(raw_short_term_memory, dict)
+            else None
+        )
         return cls(
             session_id=str(data["session_id"]),
             status=SessionStatus(str(data.get("status", SessionStatus.IDLE.value))),
@@ -52,6 +82,7 @@ class SessionRecord(SerializableModel):
             restore_marker=str(data["restore_marker"])
             if data.get("restore_marker") is not None
             else None,
+            short_term_memory=short_term_memory,
         )
 
 
@@ -84,3 +115,4 @@ class ResumeSnapshot(SerializableModel):
     runtime_state: dict[str, JsonValue]
     transcript_slice: list[dict[str, JsonValue]] = field(default_factory=list)
     working_state: dict[str, JsonValue] = field(default_factory=dict)
+    short_term_memory: JsonObject | None = None

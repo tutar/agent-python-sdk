@@ -48,6 +48,10 @@ class AnthropicMessagesModelAdapter:
     def _payload(self, request: ModelTurnRequest) -> JsonObject:
         system_messages: list[str] = []
         messages: list[JsonObject] = []
+        if isinstance(request.short_term_memory, dict):
+            summary = str(request.short_term_memory.get("summary", "")).strip()
+            if summary:
+                system_messages.append(f"Session continuity summary: {summary}")
         memory_blocks = [
             str(memory.get("summary", memory.get("content", "")))
             for memory in request.memory_context

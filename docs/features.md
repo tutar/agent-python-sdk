@@ -69,6 +69,8 @@
 
 - `InMemorySessionStore`
 - `FileSessionStore`
+- `InMemoryShortTermMemoryStore`
+- `FileShortTermMemoryStore`
 - append-only event log baseline
 - session checkpoint baseline
 - session cursor baseline
@@ -76,13 +78,15 @@
 - wake / resume snapshot baseline
 - event replay baseline
 - approval continuation state
+- short-term session memory persistence
+- short-term memory safe-point update and stabilization
 - terminal TUI 的多 session 切换与 replay
-- durable memory recall baseline via `memory_context`
 
 当前不支持：
 
 - 分支化 event log
 - 更完整的 wake / restore mode 设计
+- richer short-term salience / eviction policy
 
 ## Context Governance
 
@@ -164,11 +168,15 @@
 
 ## Memory
 
-当前 memory 子系统支持：
+当前 memory 子系统负责 durable memory，而不是 session continuity。
+
+当前支持：
 
 - `InMemoryMemoryStore`
 - `FileMemoryStore`
+- scoped durable memory via `user / project / agent / local`
 - transcript-to-durable-memory consolidation baseline
+- background consolidation job baseline
 - recall into `ModelTurnRequest.memory_context`
 - restart-safe durable memory recall
 
@@ -176,7 +184,7 @@
 
 - cross-session dream consolidation
 - richer extraction policy
-- background consolidation scheduling
+- richer recall ranking and scoping
 
 ## Gateway
 

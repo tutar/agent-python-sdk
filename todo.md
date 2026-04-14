@@ -35,8 +35,12 @@
   - transport-backed MCP client seam plus deterministic in-memory transport
   - prompt/skill adapters
 - Memory baseline exists for:
+  - in-memory and file-backed short-term session memory stores
+  - safe-point short-term memory update and stabilization
+  - short-term memory injection into `ModelTurnRequest.short_term_memory`
   - in-memory and file-backed durable memory stores
   - transcript-to-memory consolidation
+  - scoped durable memory via `user / project / agent / local`
   - recall into `memory_context` without transcript rewrite
 - Capability surface baseline now includes:
   - capability descriptors with origin and host projection
@@ -93,6 +97,10 @@
   - richer wake / restore mode handling
   - branch-aware replay if the spec requires it
 - Add richer lifecycle state and side-state restore guarantees
+- Deepen short-term memory policy
+  - salience
+  - eviction
+  - partial transcript coverage updates
 
 ### Tools
 

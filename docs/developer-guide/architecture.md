@@ -34,12 +34,13 @@
   - model input/output adaptation
   - provider adapters under `harness/providers`
 - `memory`
-  - durable memory recall and consolidation baseline
+  - scoped durable memory recall and consolidation baseline
 - `session`
   - session record
   - event log
   - checkpoint
   - replay
+  - short-term session memory
 - `tools`
   - tool registry
   - tool executor
@@ -95,12 +96,15 @@ terminal TUI 当前使用：
 
 - `InMemorySessionStore`
 - `FileSessionStore`
+- `InMemoryShortTermMemoryStore`
+- `FileShortTermMemoryStore`
 - append-only event log baseline
 - checkpoint baseline
 - cursor baseline
 - restore marker baseline
 - resume snapshot baseline
 - replay baseline
+- short-term continuity summary baseline
 
 gateway 还支持：
 
@@ -179,15 +183,25 @@ turn 级控制当前通过 `TurnControl` 暴露：
 harness 在 `build_model_input(...)` 阶段会调用它，并把最近一次治理结果保存在
 `last_context_report`，供测试和 host 层观察。
 
-## Memory Recall
+## Session And Memory Boundaries
 
-当前 durable memory 不直接改写 transcript。
+当前 session 负责 transcript、working state 和 short-term continuity。
+
+当前 `ShortTermSessionMemory` 由 session 域维护，并在安全点异步更新：
+
+- turn completed
+- turn failed
+- requires_action before persistence
+- approval continuation completion
+
+当前 durable memory 不直接改写 transcript，也不承担 restore。
 
 如果 runtime 配置了 memory store，`SimpleHarness.build_model_input(...)` 会在 context assembly
 阶段把 recalled memories 放进 `ModelTurnRequest.memory_context`。这满足了：
 
 - recall 进入 context plane
 - transcript 仍保持原始消息边界
+- short-term continuity 进入 `short_term_memory`
 - consolidation 更新 durable memory，而不是覆盖历史 session
 
 ## Capability Surface

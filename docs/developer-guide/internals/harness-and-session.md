@@ -104,6 +104,7 @@ session 不放进 harness 内部，是为了把执行和状态持久化拆开。
 
 - `SessionRecord`
 - `SessionMessage`
+- `ShortTermSessionMemory`
 - `SessionCheckpoint`
 - `SessionCursor`
 - `WakeRequest`
@@ -117,13 +118,36 @@ session 不放进 harness 内部，是为了把执行和状态持久化拆开。
 - 生命周期状态
 - event index / checkpoint 相关状态
 - restore marker
+- latest stable short-term memory snapshot
 
 durable memory 不保存在 `SessionRecord` 里。
 
 这是刻意的分层：
 
 - transcript / session state 负责当前会话历史
+- short-term session memory 负责 continuity summary
 - durable memory 负责可被后续 turn recall 的长期信息
+
+## Short-Term Memory Flow
+
+当前短期记忆已经归入 `session` 域，而不是单独的 `memory` 域。
+
+原因很直接：
+
+- 它服务的是当前 session continuity
+- 它需要和 resume / requires_action / replay 一起持久化
+- 它不应该被误用成 durable memory
+
+当前安全点流程是：
+
+1. `RalphLoop` 或 `SimpleHarness` 到达 turn 终态或 requires_action
+2. harness 调度 `ShortTermMemoryStore.update(...)`
+3. 在持久化前等待一个短超时窗口拿到稳定版本
+4. 稳定结果写进 `SessionRecord.short_term_memory`
+5. `ResumeSnapshot` 会带上这份 continuity summary
+
+`build_model_input(...)` 会优先读取稳定短期记忆，并写入 `ModelTurnRequest.short_term_memory`。
+provider adapter 再把这份摘要映射成 provider-specific system context。
 
 ## Event Log Strategy
 

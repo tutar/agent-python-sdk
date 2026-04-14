@@ -7,7 +7,10 @@ from openagent.object_model import RuntimeEventType, ToolResult
 from openagent.profiles import TuiProfile
 from openagent.session import (
     FileSessionStore,
+    FileShortTermMemoryStore,
     InMemorySessionStore,
+    InMemoryShortTermMemoryStore,
+    SessionMessage,
     WakeRequest,
 )
 from openagent.tools import (
@@ -316,6 +319,54 @@ def test_rule_based_tool_policy_engine_matches_and_falls_back() -> None:
         assert "Permission required" in str(exc)
     else:
         raise AssertionError("Expected RequiresActionError via fallback tool policy")
+
+
+def test_in_memory_short_term_memory_store_stabilizes_updates() -> None:
+    store = InMemoryShortTermMemoryStore()
+    transcript = [
+        SessionMessage(role="user", content="Finish the release checklist"),
+        SessionMessage(role="assistant", content="Tracking the checklist now"),
+    ]
+
+    result = store.update("sess_short", transcript, current_memory=None)
+    stable = store.wait_until_stable("sess_short", 1000)
+
+    assert result.scheduled is True
+    assert result.stable is False
+    assert stable is not None
+    assert "checklist" in stable.summary.lower()
+    assert stable.coverage_boundary == 2
+
+
+def test_file_short_term_memory_store_persists_snapshots(tmp_path: Path) -> None:
+    root = tmp_path / "short_term"
+    store = FileShortTermMemoryStore(root)
+    transcript = [SessionMessage(role="user", content="Remember the deployment status")]
+
+    store.update("sess_short_file", transcript, current_memory=None)
+    stable = store.wait_until_stable("sess_short_file", 1000)
+    restored = FileShortTermMemoryStore(root)
+
+    assert stable is not None
+    loaded = restored.load("sess_short_file")
+    assert loaded is not None
+    assert "deployment status" in loaded.summary.lower()
+
+
+def test_resume_snapshot_includes_short_term_memory() -> None:
+    sessions = InMemorySessionStore()
+    session = sessions.load_session("sess_resume_short")
+    session.messages.append(SessionMessage(role="user", content="Continue the migration"))
+    session.short_term_memory = {
+        "summary": "Continue the migration plan.",
+        "coverage_boundary": 1,
+    }
+    sessions.save_session("sess_resume_short", session)
+
+    snapshot = sessions.get_resume_snapshot(WakeRequest(session_id="sess_resume_short"))
+
+    assert snapshot.short_term_memory is not None
+    assert snapshot.short_term_memory["summary"] == "Continue the migration plan."
 
 
 def test_in_memory_session_store_checkpoint_and_readback() -> None:

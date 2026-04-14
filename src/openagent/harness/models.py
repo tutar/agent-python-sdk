@@ -16,6 +16,7 @@ class ModelTurnRequest(SerializableModel):
     messages: list[JsonObject]
     available_tools: list[str] = field(default_factory=list)
     tool_definitions: list[JsonObject] = field(default_factory=list)
+    short_term_memory: JsonObject | None = None
     memory_context: list[JsonObject] = field(default_factory=list)
 
 

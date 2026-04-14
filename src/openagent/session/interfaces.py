@@ -5,7 +5,14 @@ from __future__ import annotations
 from typing import Any, Protocol
 
 from openagent.object_model import RuntimeEvent
-from openagent.session.models import ResumeSnapshot, SessionCheckpoint, SessionCursor, WakeRequest
+from openagent.session.models import (
+    ResumeSnapshot,
+    SessionCheckpoint,
+    SessionCursor,
+    ShortTermMemoryUpdateResult,
+    ShortTermSessionMemory,
+    WakeRequest,
+)
 
 
 class SessionStore(Protocol):
@@ -37,3 +44,26 @@ class SessionStore(Protocol):
 
     def get_resume_snapshot(self, wake_request: WakeRequest) -> ResumeSnapshot:
         """Build a runtime-facing resume snapshot from durable session state."""
+
+
+class ShortTermMemoryStore(Protocol):
+    def load(self, session_id: str) -> ShortTermSessionMemory | None:
+        """Load the current stable short-term memory snapshot."""
+
+    def update(
+        self,
+        session_id: str,
+        transcript_delta: list[Any],
+        current_memory: ShortTermSessionMemory | None,
+    ) -> ShortTermMemoryUpdateResult:
+        """Schedule or perform a short-term memory update."""
+
+    def get_coverage_boundary(self, session_id: str) -> int | None:
+        """Return the transcript coverage boundary for the latest stable memory."""
+
+    def wait_until_stable(
+        self,
+        session_id: str,
+        timeout_ms: int,
+    ) -> ShortTermSessionMemory | None:
+        """Wait for the latest update to reach a stable version."""

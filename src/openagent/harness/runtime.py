@@ -64,6 +64,8 @@ class RalphLoop:
         if not approved:
             session.pending_tool_calls = []
             session.status = SessionStatus.IDLE
+            self.harness.schedule_memory_maintenance(session)
+            self.harness.stabilize_short_term_memory(session)
             self.harness._persist_session(session_handle, session)
             terminal = TerminalState(status=TerminalStatus.STOPPED, reason="approval_rejected")
             event = self.harness._append_event(
@@ -107,6 +109,8 @@ class RalphLoop:
             )
             session.pending_tool_calls = []
             session.status = SessionStatus.IDLE
+            self.harness.schedule_memory_maintenance(session)
+            self.harness.stabilize_short_term_memory(session)
             self.harness._persist_session(session_handle, session)
             return emitted_events, terminal
         if isinstance(tool_error, ToolCancelledError):
@@ -127,6 +131,8 @@ class RalphLoop:
             )
             session.pending_tool_calls = []
             session.status = SessionStatus.IDLE
+            self.harness.schedule_memory_maintenance(session)
+            self.harness.stabilize_short_term_memory(session)
             self.harness._persist_session(session_handle, session)
             return emitted_events, terminal
         session.pending_tool_calls = []
@@ -165,6 +171,8 @@ class RalphLoop:
             )
         )
         session.status = SessionStatus.IDLE
+        self.harness.schedule_memory_maintenance(session)
+        self.harness.stabilize_short_term_memory(session)
         self.harness._persist_session(session_handle, session)
         return emitted_events, terminal
 
@@ -311,6 +319,8 @@ class RalphLoop:
                 yield event
                 session.status = SessionStatus.REQUIRES_ACTION
                 session.pending_tool_calls = handled.tool_calls
+                self.harness.schedule_memory_maintenance(session)
+                self.harness.stabilize_short_term_memory(session)
                 self.harness._persist_session(session_handle, session)
                 return
             except ToolPermissionDeniedError as exc:
