@@ -8,7 +8,7 @@
 
 已支持：
 
-- `SimpleHarness` turn execution
+- `SimpleHarness` facade over an explicit `RalphLoop` turn runtime
 - `run_turn_stream(...)`
 - `turn_started`
 - `assistant_delta`
@@ -34,6 +34,32 @@
 - tool-aware cancellation recovery
 - full retry policy customization
 - full timeout semantics for every streaming backend
+
+## Providers
+
+当前已经有真实 LLM provider adapter：
+
+- `OpenAIChatCompletionsModelAdapter`
+- `AnthropicMessagesModelAdapter`
+- `load_model_from_env()`
+- stdlib-based `UrllibHttpTransport`
+
+这些 provider adapter 当前归属 `harness/providers`，而不是 SDK 根目录。
+
+当前 terminal bridge 会在设置 `OPENAGENT_MODEL` 时自动尝试加载真实 provider。
+
+当前支持：
+
+- `OPENAGENT_PROVIDER=openai`
+- `OPENAGENT_PROVIDER=anthropic`
+- 自定义 `OPENAGENT_BASE_URL`
+- provider-level tool definition projection
+- provider response -> `ToolCall` 解析 baseline
+
+当前不支持：
+
+- provider-native streaming SSE
+- provider-specific advanced options 全量映射
 
 ## Session
 

@@ -20,7 +20,7 @@
 ## Layout
 
 - `src/openagent/object_model/`: canonical objects and schema envelope
-- `src/openagent/harness/`: harness interfaces
+- `src/openagent/harness/`: harness interfaces, runtime, and provider-backed model integration
 - `src/openagent/session/`: session interfaces
 - `src/openagent/tools/`: tool interfaces
 - `src/openagent/sandbox/`: sandbox interfaces

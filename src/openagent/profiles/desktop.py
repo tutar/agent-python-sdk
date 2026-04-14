@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 from openagent.context_governance import ContextGovernance
 from openagent.gateway import FileSessionBindingStore, IngressGateway, InProcessSessionAdapter
-from openagent.harness import ModelAdapter, SimpleHarness
+from openagent.harness import ModelProviderAdapter, SimpleHarness
 from openagent.orchestration import FileTaskManager, InMemoryTaskManager
 from openagent.session import FileSessionStore
 from openagent.tools import SimpleToolExecutor, StaticToolRegistry, ToolDefinition
@@ -53,7 +53,7 @@ class DesktopProfile:
 
     def create_runtime(
         self,
-        model: ModelAdapter,
+        model: ModelProviderAdapter,
         session_root: str,
         tools: list[ToolDefinition] | None = None,
     ) -> SimpleHarness:
@@ -68,7 +68,7 @@ class DesktopProfile:
 
     def create_gateway(
         self,
-        model: ModelAdapter,
+        model: ModelProviderAdapter,
         session_root: str,
         tools: list[ToolDefinition] | None = None,
         binding_root: str | None = None,

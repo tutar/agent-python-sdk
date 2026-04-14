@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from openagent.object_model import JsonValue, RuntimeEvent, SerializableModel
+from openagent.object_model import JsonObject, JsonValue, RuntimeEvent, SerializableModel
 from openagent.session.enums import SessionStatus
 from openagent.tools.models import ToolCall
 
@@ -13,6 +13,7 @@ from openagent.tools.models import ToolCall
 class SessionMessage(SerializableModel):
     role: str
     content: str
+    metadata: JsonObject = field(default_factory=dict)
 
 
 @dataclass(slots=True)

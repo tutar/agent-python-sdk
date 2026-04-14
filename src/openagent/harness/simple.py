@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import cast
 
@@ -14,12 +14,17 @@ from openagent.context_governance import (
     ContextReport,
 )
 from openagent.harness.models import (
-    ModelAdapter,
+    AgentRuntime,
+    CancelledTurn,
+    ModelProviderAdapter,
+    ModelProviderStreamingAdapter,
     ModelTurnRequest,
     ModelTurnResponse,
-    StreamingModelAdapter,
+    RetryExhaustedTurn,
+    TimedOutTurn,
     TurnControl,
 )
+from openagent.harness.runtime import RalphLoop
 from openagent.memory import MemoryStore
 from openagent.object_model import (
     JsonObject,
@@ -31,13 +36,11 @@ from openagent.object_model import (
 )
 from openagent.session import SessionMessage, SessionRecord, SessionStatus, SessionStore
 from openagent.tools import (
-    RequiresActionError,
     ToolCall,
     ToolCancelledError,
     ToolExecutionContext,
     ToolExecutionFailedError,
     ToolExecutor,
-    ToolPermissionDeniedError,
     ToolRegistry,
 )
 
@@ -51,7 +54,7 @@ class SimpleHarness:
     runtime events in order.
     """
 
-    model: ModelAdapter
+    model: ModelProviderAdapter
     sessions: SessionStore
     tools: ToolRegistry
     executor: ToolExecutor
@@ -59,6 +62,12 @@ class SimpleHarness:
     context_governance: ContextGovernance | None = None
     last_context_report: ContextReport | None = None
     memory_store: MemoryStore | None = None
+    runtime_loop: AgentRuntime = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        # Keep the loop explicit and spec-aligned while preserving the existing
+        # facade API that tests and frontends already use.
+        self.runtime_loop = RalphLoop(self)
 
     def run_turn_stream(
         self,
@@ -66,11 +75,7 @@ class SimpleHarness:
         session_handle: str,
         control: TurnControl | None = None,
     ) -> Iterator[RuntimeEvent]:
-        yield from self._execute_turn_stream(
-            input=input,
-            session_handle=session_handle,
-            control=control or TurnControl(),
-        )
+        yield from self.runtime_loop.run_turn_stream(input, session_handle, control=control)
 
     def run_turn(
         self,
@@ -81,316 +86,12 @@ class SimpleHarness:
         events = list(self.run_turn_stream(input, session_handle, control=control))
         return events, self._terminal_state_from_event(events[-1])
 
-    def _execute_turn_stream(
-        self,
-        input: str,
-        session_handle: str,
-        control: TurnControl,
-    ) -> Iterator[RuntimeEvent]:
-        session = self.sessions.load_session(session_handle)
-        if not isinstance(session, SessionRecord):
-            raise TypeError("SimpleHarness requires SessionRecord-compatible session state")
-
-        session.status = SessionStatus.RUNNING
-        session.messages.append(SessionMessage(role="user", content=input))
-        yield self._append_event(
-            session,
-            self._new_event(
-                session_id=session_handle,
-                event_type=RuntimeEventType.TURN_STARTED,
-                payload={"input": input},
-            ),
-        )
-        self._persist_session(session_handle, session)
-
-        for _ in range(self.max_iterations):
-            cancelled = self._check_cancelled(control)
-            if cancelled:
-                yield self._emit_terminal(
-                    session,
-                    session_handle,
-                    RuntimeEventType.TURN_FAILED,
-                    TerminalState(status=TerminalStatus.STOPPED, reason="cancelled"),
-                )
-                return
-
-            request = self.build_model_input(session, [])
-            try:
-                handled, streamed_events = self._run_model_with_retries(
-                    request=request,
-                    session=session,
-                    session_handle=session_handle,
-                    control=control,
-                )
-            except _CancelledTurn:
-                yield self._emit_terminal(
-                    session,
-                    session_handle,
-                    RuntimeEventType.TURN_FAILED,
-                    TerminalState(status=TerminalStatus.STOPPED, reason="cancelled"),
-                )
-                return
-            except _TimedOutTurn:
-                yield self._emit_terminal(
-                    session,
-                    session_handle,
-                    RuntimeEventType.TURN_FAILED,
-                    TerminalState(
-                        status=TerminalStatus.FAILED,
-                        reason="timeout",
-                        retryable=True,
-                    ),
-                )
-                return
-            except _RetryExhaustedTurn as exc:
-                yield self._emit_terminal(
-                    session,
-                    session_handle,
-                    RuntimeEventType.TURN_FAILED,
-                    TerminalState(
-                        status=TerminalStatus.FAILED,
-                        reason="retry_exhausted",
-                        retryable=False,
-                        summary=str(exc),
-                    ),
-                )
-                return
-
-            yield from streamed_events
-
-            if handled.assistant_message is not None:
-                session.messages.append(
-                    SessionMessage(role="assistant", content=handled.assistant_message)
-                )
-                yield self._append_event(
-                    session,
-                    self._new_event(
-                        session_id=session_handle,
-                        event_type=RuntimeEventType.ASSISTANT_MESSAGE,
-                        payload={"message": handled.assistant_message},
-                    ),
-                )
-                self._persist_session(session_handle, session)
-
-            if not handled.tool_calls:
-                yield self._emit_terminal(
-                    session,
-                    session_handle,
-                    RuntimeEventType.TURN_COMPLETED,
-                    TerminalState(status=TerminalStatus.COMPLETED, reason="assistant_message"),
-                )
-                return
-
-            self._ensure_tool_call_ids(handled.tool_calls)
-
-            try:
-                tool_events, tool_results, tool_error = self._execute_tool_stream(
-                    session=session,
-                    session_handle=session_handle,
-                    tool_calls=handled.tool_calls,
-                    context=ToolExecutionContext(session_id=session_handle),
-                )
-                yield from tool_events
-            except RequiresActionError as exc:
-                event = self._append_event(
-                    session,
-                    self._new_event(
-                        session_id=session_handle,
-                        event_type=RuntimeEventType.REQUIRES_ACTION,
-                        payload=self._requires_action_payload(exc.requires_action),
-                    ),
-                )
-                yield event
-                session.status = SessionStatus.REQUIRES_ACTION
-                session.pending_tool_calls = handled.tool_calls
-                self._persist_session(session_handle, session)
-                return
-            except ToolPermissionDeniedError as exc:
-                yield self._emit_terminal(
-                    session,
-                    session_handle,
-                    RuntimeEventType.TURN_FAILED,
-                    TerminalState(
-                        status=TerminalStatus.FAILED,
-                        reason="tool_permission_denied",
-                        summary=str(exc),
-                    ),
-                )
-                return
-            except ToolExecutionFailedError as exc:
-                yield self._emit_terminal(
-                    session,
-                    session_handle,
-                    RuntimeEventType.TURN_FAILED,
-                    TerminalState(
-                        status=TerminalStatus.FAILED,
-                        reason="tool_execution_failed",
-                        summary=str(exc),
-                    ),
-                )
-                return
-            except ToolCancelledError as exc:
-                yield self._emit_terminal(
-                    session,
-                    session_handle,
-                    RuntimeEventType.TURN_FAILED,
-                    TerminalState(
-                        status=TerminalStatus.STOPPED,
-                        reason="tool_cancelled",
-                        summary=str(exc),
-                    ),
-                )
-                return
-
-            if isinstance(tool_error, ToolExecutionFailedError):
-                yield self._emit_terminal(
-                    session,
-                    session_handle,
-                    RuntimeEventType.TURN_FAILED,
-                    TerminalState(
-                        status=TerminalStatus.FAILED,
-                        reason="tool_execution_failed",
-                        summary=str(tool_error),
-                    ),
-                )
-                return
-            if isinstance(tool_error, ToolCancelledError):
-                yield self._emit_terminal(
-                    session,
-                    session_handle,
-                    RuntimeEventType.TURN_FAILED,
-                    TerminalState(
-                        status=TerminalStatus.STOPPED,
-                        reason="tool_cancelled",
-                        summary=str(tool_error),
-                    ),
-                )
-                return
-
-            self._append_tool_results(session, tool_results)
-            self._persist_session(session_handle, session)
-
-        yield self._emit_terminal(
-            session,
-            session_handle,
-            RuntimeEventType.TURN_FAILED,
-            TerminalState(status=TerminalStatus.FAILED, reason="iteration_limit_exceeded"),
-        )
-
     def continue_turn(
         self,
         session_handle: str,
         approved: bool,
     ) -> tuple[list[RuntimeEvent], TerminalState]:
-        session = self.sessions.load_session(session_handle)
-        if not isinstance(session, SessionRecord):
-            raise TypeError("SimpleHarness requires SessionRecord-compatible session state")
-        if session.status is not SessionStatus.REQUIRES_ACTION or not session.pending_tool_calls:
-            raise ValueError("Session has no pending requires_action continuation")
-
-        if not approved:
-            session.pending_tool_calls = []
-            session.status = SessionStatus.IDLE
-            self._persist_session(session_handle, session)
-            terminal = TerminalState(status=TerminalStatus.STOPPED, reason="approval_rejected")
-            event = self._append_event(
-                session,
-                self._new_event(
-                    session_id=session_handle,
-                    event_type=RuntimeEventType.TURN_FAILED,
-                    payload=terminal.to_dict(),
-                ),
-            )
-            return [event], terminal
-
-        emitted_events: list[RuntimeEvent] = []
-        session.status = SessionStatus.RUNNING
-        pending_calls = list(session.pending_tool_calls)
-        tool_events, tool_results, tool_error = self._execute_tool_stream(
-            session=session,
-            session_handle=session_handle,
-            tool_calls=pending_calls,
-            context=ToolExecutionContext(
-                session_id=session_handle,
-                approved_tool_names=[tool_call.tool_name for tool_call in pending_calls],
-            ),
-        )
-        emitted_events.extend(tool_events)
-        if isinstance(tool_error, ToolExecutionFailedError):
-            terminal = TerminalState(
-                status=TerminalStatus.FAILED,
-                reason="tool_execution_failed",
-                summary=str(tool_error),
-            )
-            emitted_events.append(
-                self._append_event(
-                    session,
-                    self._new_event(
-                        session_id=session_handle,
-                        event_type=RuntimeEventType.TURN_FAILED,
-                        payload=terminal.to_dict(),
-                    ),
-                )
-            )
-            session.pending_tool_calls = []
-            session.status = SessionStatus.IDLE
-            self._persist_session(session_handle, session)
-            return emitted_events, terminal
-        if isinstance(tool_error, ToolCancelledError):
-            terminal = TerminalState(
-                status=TerminalStatus.STOPPED,
-                reason="tool_cancelled",
-                summary=str(tool_error),
-            )
-            emitted_events.append(
-                self._append_event(
-                    session,
-                    self._new_event(
-                        session_id=session_handle,
-                        event_type=RuntimeEventType.TURN_FAILED,
-                        payload=terminal.to_dict(),
-                    ),
-                )
-            )
-            session.pending_tool_calls = []
-            session.status = SessionStatus.IDLE
-            self._persist_session(session_handle, session)
-            return emitted_events, terminal
-        session.pending_tool_calls = []
-        self._append_tool_results(session, tool_results)
-
-        request = self.build_model_input(session, [])
-        response = self.model.generate(request)
-        handled = self.handle_model_output(response)
-        if handled.assistant_message is not None:
-            session.messages.append(
-                SessionMessage(role="assistant", content=handled.assistant_message)
-            )
-            emitted_events.append(
-                self._append_event(
-                    session,
-                    self._new_event(
-                        session_id=session_handle,
-                        event_type=RuntimeEventType.ASSISTANT_MESSAGE,
-                        payload={"message": handled.assistant_message},
-                    ),
-                )
-            )
-
-        terminal = TerminalState(status=TerminalStatus.COMPLETED, reason="approval_continuation")
-        emitted_events.append(
-            self._append_event(
-                session,
-                self._new_event(
-                    session_id=session_handle,
-                    event_type=RuntimeEventType.TURN_COMPLETED,
-                    payload=terminal.to_dict(),
-                ),
-            )
-        )
-        session.status = SessionStatus.IDLE
-        self._persist_session(session_handle, session)
-        return emitted_events, terminal
+        return self.runtime_loop.continue_turn(session_handle, approved)
 
     def build_model_input(
         self,
@@ -405,15 +106,15 @@ class SimpleHarness:
             session_slice.messages
         ):
             compact_result = self.context_governance.compact(session_slice.messages)
-            messages = compact_result.messages
+            messages = self._normalize_message_payloads(compact_result.messages)
             compacted = compact_result.compacted_count > 0
             if self.context_governance.analyze(session_slice.messages, available_tools).over_budget:
                 recovery_result = self.context_governance.recover_overflow(session_slice.messages)
                 if recovery_result.recovered:
-                    messages = recovery_result.messages
+                    messages = self._normalize_message_payloads(recovery_result.messages)
                     recovered_from_overflow = True
         else:
-            messages = [message.to_dict() for message in session_slice.messages]
+            messages = [self._message_payload(message) for message in session_slice.messages]
         if self.context_governance is not None:
             self.last_context_report = self.context_governance.report_for_model_input(
                 session_slice.messages,
@@ -428,6 +129,7 @@ class SimpleHarness:
                 overflow_result = self.context_governance.recover_overflow(session_slice.messages)
                 if overflow_result.recovered:
                     messages = overflow_result.messages
+                    messages = self._normalize_message_payloads(messages)
                     recovered_from_overflow = True
                     self.last_context_report = self.context_governance.report_for_model_input(
                         session_slice.messages,
@@ -443,10 +145,19 @@ class SimpleHarness:
                 latest_query,
             )
             memory_context = [record.to_dict() for record in recall_result.recalled]
+        tool_definitions: list[JsonObject] = [
+            {
+                "name": tool.name,
+                "description": tool.description(),
+                "input_schema": tool.input_schema,
+            }
+            for tool in self.tools.list_tools()
+        ]
         return ModelTurnRequest(
             session_id=session_slice.session_id,
             messages=messages,
             available_tools=available_tools,
+            tool_definitions=tool_definitions,
             memory_context=memory_context,
         )
 
@@ -459,6 +170,24 @@ class SimpleHarness:
             ToolExecutionContext(session_id="ad_hoc"),
         )
         return result[0]
+
+    def _new_session_message(self, role: str, content: str) -> SessionMessage:
+        return SessionMessage(role=role, content=content)
+
+    def _message_payload(self, message: SessionMessage) -> JsonObject:
+        payload = message.to_dict()
+        if payload.get("metadata") == {}:
+            payload.pop("metadata", None)
+        return payload
+
+    def _normalize_message_payloads(self, messages: list[JsonObject]) -> list[JsonObject]:
+        normalized: list[JsonObject] = []
+        for message in messages:
+            payload = dict(message)
+            if payload.get("metadata") == {}:
+                payload.pop("metadata", None)
+            normalized.append(payload)
+        return normalized
 
     def _execute_tool_stream(
         self,
@@ -512,7 +241,7 @@ class SimpleHarness:
         last_error: Exception | None = None
         for attempt in range(max(0, control.max_retries) + 1):
             if self._check_cancelled(control):
-                raise _CancelledTurn()
+                raise CancelledTurn()
             try:
                 return self._run_model_once(
                     request=request,
@@ -520,13 +249,13 @@ class SimpleHarness:
                     session_handle=session_handle,
                     control=control,
                 )
-            except (_CancelledTurn, _TimedOutTurn):
+            except (CancelledTurn, TimedOutTurn):
                 raise
             except Exception as exc:
                 last_error = exc
                 if attempt == control.max_retries:
-                    raise _RetryExhaustedTurn(str(exc)) from exc
-        raise _RetryExhaustedTurn(str(last_error))
+                    raise RetryExhaustedTurn(str(exc)) from exc
+        raise RetryExhaustedTurn(str(last_error))
 
     def _run_model_once(
         self,
@@ -537,7 +266,7 @@ class SimpleHarness:
     ) -> tuple[ModelTurnResponse, list[RuntimeEvent]]:
         stream_generate = getattr(self.model, "stream_generate", None)
         if callable(stream_generate):
-            streaming_model = cast(StreamingModelAdapter, self.model)
+            streaming_model = cast(ModelProviderStreamingAdapter, self.model)
             return self._run_streaming_model(
                 model=streaming_model,
                 request=request,
@@ -559,11 +288,11 @@ class SimpleHarness:
             try:
                 return future.result(timeout=control.timeout_seconds), []
             except FutureTimeoutError as exc:
-                raise _TimedOutTurn() from exc
+                raise TimedOutTurn() from exc
 
     def _run_streaming_model(
         self,
-        model: StreamingModelAdapter,
+        model: ModelProviderStreamingAdapter,
         request: ModelTurnRequest,
         session: SessionRecord,
         session_handle: str,
@@ -576,7 +305,7 @@ class SimpleHarness:
         streamed_events: list[RuntimeEvent] = []
         for stream_event in stream:
             if self._check_cancelled(control):
-                raise _CancelledTurn()
+                raise CancelledTurn()
             if stream_event.assistant_delta:
                 aggregated_message += stream_event.assistant_delta
                 runtime_event = self._append_event(
@@ -613,6 +342,7 @@ class SimpleHarness:
                 SessionMessage(
                     role="tool",
                     content=f"{result.tool_name}: {result.content} [externalized:{storage_marker}]",
+                    metadata=dict(result.metadata or {}),
                 )
             )
 
@@ -702,15 +432,3 @@ class SimpleHarness:
                 summary=summary,
             )
         raise ValueError("Event stream did not terminate with a terminal event")
-
-
-class _CancelledTurn(Exception):
-    pass
-
-
-class _TimedOutTurn(Exception):
-    pass
-
-
-class _RetryExhaustedTurn(Exception):
-    pass

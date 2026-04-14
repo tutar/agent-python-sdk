@@ -21,6 +21,28 @@ If `python3` is not the right interpreter on your machine, set `PYTHON` first:
 PYTHON=/path/to/python npm run dev
 ```
 
+## Real Provider Mode
+
+If you want the bridge to call a real LLM backend instead of the demo model, set:
+
+```bash
+export OPENAGENT_PROVIDER=openai
+export OPENAGENT_BASE_URL=http://127.0.0.1:8001
+export OPENAGENT_MODEL=gpt-4.1
+cd frontend/terminal-tui
+npm run dev
+```
+
+Or for Anthropic-compatible proxies:
+
+```bash
+export OPENAGENT_PROVIDER=anthropic
+export OPENAGENT_BASE_URL=http://127.0.0.1:8001
+export OPENAGENT_MODEL=claude-sonnet-4-5
+cd frontend/terminal-tui
+npm run dev
+```
+
 ## Demo Commands
 
 - Plain text: normal assistant reply

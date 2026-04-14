@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,7 +23,15 @@ from openagent.gateway import (  # noqa: E402
     IngressGateway,
     InProcessSessionAdapter,
 )
-from openagent.harness import ModelTurnRequest, ModelTurnResponse  # noqa: E402
+from openagent.harness import (  # noqa: E402
+    ModelProviderAdapter,
+    ModelTurnRequest,
+    ModelTurnResponse,
+)
+from openagent.harness.providers import (  # noqa: E402
+    ProviderConfigurationError,
+    load_model_from_env,
+)
 from openagent.object_model import RuntimeEvent, ToolResult  # noqa: E402
 from openagent.profiles import TuiProfile  # noqa: E402
 from openagent.tools import PermissionDecision, ToolCall  # noqa: E402
@@ -125,8 +134,9 @@ def session_identity(session_name: str) -> tuple[str, str]:
 
 def main() -> None:
     profile = TuiProfile()
+    model = _load_bridge_model()
     runtime = profile.create_runtime(
-        model=DemoModel(),
+        model=model,
         tools=[EchoTool(), AdminTool()],
     )
 
@@ -243,6 +253,16 @@ def main() -> None:
             continue
 
         emit_error(f"unknown_message_kind:{kind}")
+
+
+def _load_bridge_model() -> ModelProviderAdapter:
+    if os.getenv("OPENAGENT_MODEL") is None:
+        return DemoModel()
+    try:
+        return load_model_from_env()
+    except ProviderConfigurationError as exc:
+        emit_error(f"provider_configuration_error:{exc}")
+        return DemoModel()
 
 
 if __name__ == "__main__":

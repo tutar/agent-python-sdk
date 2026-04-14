@@ -27,6 +27,7 @@
   - terminal TUI 集成方式
 - [Internals](./internals/README.md)
   - 逐模块解释 object model、harness、session、tools、gateway、sandbox 和 orchestration
+  - 包括 model integration / providers 边界
 
 ## Repository Layout
 

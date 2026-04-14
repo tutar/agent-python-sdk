@@ -1,6 +1,10 @@
 from openagent import (
     SPEC_VERSION,
+    AgentRuntime,
     CapabilityView,
+    ModelProviderAdapter,
+    ModelProviderStreamingAdapter,
+    RalphLoop,
     RequiresAction,
     RuntimeEvent,
     RuntimeEventType,
@@ -24,6 +28,10 @@ def test_public_exports_are_importable() -> None:
     assert SPEC_VERSION == "0.1"
     assert TuiProfile().name == "tui"
     assert Harness is not None
+    assert AgentRuntime is not None
+    assert ModelProviderAdapter is not None
+    assert ModelProviderStreamingAdapter is not None
+    assert RalphLoop is not None
     assert SessionStore is not None
     assert ToolDefinition is not None
     assert ToolRegistry is not None

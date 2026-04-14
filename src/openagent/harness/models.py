@@ -1,4 +1,4 @@
-"""Harness-local response and adapter models."""
+"""Harness-local runtime, response, and adapter models."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from openagent.object_model import JsonObject, SerializableModel
+from openagent.object_model import JsonObject, RuntimeEvent, SerializableModel, TerminalState
 from openagent.tools import ToolCall
 
 
@@ -15,6 +15,7 @@ class ModelTurnRequest(SerializableModel):
     session_id: str
     messages: list[JsonObject]
     available_tools: list[str] = field(default_factory=list)
+    tool_definitions: list[JsonObject] = field(default_factory=list)
     memory_context: list[JsonObject] = field(default_factory=list)
 
 
@@ -31,14 +32,27 @@ class ModelStreamEvent(SerializableModel):
     tool_calls: list[ToolCall] = field(default_factory=list)
 
 
-class ModelAdapter(Protocol):
+class ModelProviderAdapter(Protocol):
     def generate(self, request: ModelTurnRequest) -> ModelTurnResponse:
         """Produce the next model response for the current turn."""
 
 
-class StreamingModelAdapter(ModelAdapter, Protocol):
+class ModelProviderStreamingAdapter(ModelProviderAdapter, Protocol):
     def stream_generate(self, request: ModelTurnRequest) -> Iterator[ModelStreamEvent]:
         """Produce streamed model events for the current turn."""
+
+
+# Backward-compatible aliases while the SDK migrates to the clearer provider-aware names.
+ModelAdapter = ModelProviderAdapter
+StreamingModelAdapter = ModelProviderStreamingAdapter
+
+
+@dataclass(slots=True)
+class TurnState(SerializableModel):
+    messages: list[JsonObject] = field(default_factory=list)
+    turn_count: int = 0
+    transition: str = "idle"
+    requires_action: bool = False
 
 
 @dataclass(slots=True)
@@ -46,6 +60,35 @@ class TurnControl:
     timeout_seconds: float | None = None
     max_retries: int = 0
     cancellation_check: Callable[[], bool] | None = None
+
+
+class AgentRuntime(Protocol):
+    def run_turn_stream(
+        self,
+        input: str,
+        session_handle: str,
+        control: TurnControl | None = None,
+    ) -> Iterator[RuntimeEvent]:
+        """Advance the current turn state machine as an event stream."""
+
+    def continue_turn(
+        self,
+        session_handle: str,
+        approved: bool,
+    ) -> tuple[list[RuntimeEvent], TerminalState]:
+        """Resume a previously blocked turn after a host decision."""
+
+
+class CancelledTurn(Exception):
+    """Raised when cooperative cancellation stops the current turn."""
+
+
+class TimedOutTurn(Exception):
+    """Raised when the configured turn timeout expires."""
+
+
+class RetryExhaustedTurn(Exception):
+    """Raised when model retries are exhausted."""
 
 
 @dataclass(slots=True)

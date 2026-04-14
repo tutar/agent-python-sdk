@@ -6,6 +6,7 @@
 
 - [Object Model](./object-model.md)
 - [Harness And Session](./harness-and-session.md)
+- [Model Provider And Providers](./model-provider-and-providers.md)
 - [Tools And Capability Surface](./tools-and-capability-surface.md)
 - [Gateway And Frontend](./gateway-and-frontend.md)
 - [Orchestration And Sandbox](./orchestration-and-sandbox.md)
@@ -14,6 +15,7 @@
 
 1. `object-model`
 2. `harness-and-session`
-3. `tools-and-capability-surface`
-4. `gateway-and-frontend`
-5. `orchestration-and-sandbox`
+3. `model-provider-and-providers`
+4. `tools-and-capability-surface`
+5. `gateway-and-frontend`
+6. `orchestration-and-sandbox`

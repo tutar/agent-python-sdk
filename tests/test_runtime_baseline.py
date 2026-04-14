@@ -6,6 +6,7 @@ from openagent.harness import (
     ModelStreamEvent,
     ModelTurnRequest,
     ModelTurnResponse,
+    RalphLoop,
     SimpleHarness,
     TurnControl,
 )
@@ -106,6 +107,8 @@ def test_simple_harness_basic_turn() -> None:
         RuntimeEventType.TURN_COMPLETED,
     ]
     assert session_store.load_session("sess_basic").messages[-1].content == "hello from model"
+    assert isinstance(harness.runtime_loop, RalphLoop)
+    assert harness.runtime_loop.state.transition == "completed"
 
 
 def test_simple_harness_tool_roundtrip() -> None:

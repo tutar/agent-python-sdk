@@ -9,8 +9,9 @@
 
 1. 安装 Python 开发依赖
 2. 跑通 SDK 检查
-3. 启动 terminal TUI
-4. 通过 TUI 走一遍消息、工具调用和审批流程
+3. 配置真实 LLM provider 或使用 demo model
+4. 启动 terminal TUI
+5. 通过 TUI 走一遍消息、工具调用和审批流程
 
 ## Requirements
 
@@ -69,6 +70,43 @@ npm run dev
 PYTHON=/path/to/python npm run dev
 ```
 
+## Connect A Real LLM Backend
+
+当前 terminal bridge 支持两种真实 provider 适配格式：
+
+- OpenAI-compatible: `/v1/chat/completions`
+- Anthropic-compatible: `/v1/messages`
+
+你当前提供的本地代理 base URL 是 `http://127.0.0.1:8001`，可以直接这样启动：
+
+OpenAI-compatible:
+
+```bash
+export OPENAGENT_PROVIDER=openai
+export OPENAGENT_BASE_URL=http://127.0.0.1:8001
+export OPENAGENT_MODEL=gpt-4.1
+cd frontend/terminal-tui
+npm run dev
+```
+
+Anthropic-compatible:
+
+```bash
+export OPENAGENT_PROVIDER=anthropic
+export OPENAGENT_BASE_URL=http://127.0.0.1:8001
+export OPENAGENT_MODEL=claude-sonnet-4-5
+cd frontend/terminal-tui
+npm run dev
+```
+
+如果你的本地代理需要鉴权，也可以额外设置：
+
+- `OPENAGENT_API_KEY`
+- `OPENAI_API_KEY`
+- `ANTHROPIC_API_KEY`
+
+如果没有设置 `OPENAGENT_MODEL`，bridge 会自动回退到本地 demo model。
+
 ## Walk Through The Main Flow
 
 启动后可以直接在 TUI 输入：
@@ -96,7 +134,7 @@ frontend 不直接调用 harness/runtime。
 
 terminal TUI 通过本地 stdio bridge 接入 Python gateway：
 
-`terminal-tui -> bridge.py -> IngressGateway -> InProcessSessionAdapter -> SimpleHarness`
+`terminal-tui -> bridge.py -> IngressGateway -> InProcessSessionAdapter -> SimpleHarness -> RalphLoop -> ModelProviderAdapter -> harness/providers`
 
 这条边界当前是稳定集成入口。
 

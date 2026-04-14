@@ -9,9 +9,16 @@
 
 ## Harness Role
 
-当前核心实现是 `SimpleHarness`。
+当前核心实现拆成两层：
 
-它的职责是：
+- `SimpleHarness`
+  - 对外 facade
+  - 保留易用的 direct-call API
+- `RalphLoop`
+  - 明确的 turn 状态机
+  - 对齐 spec 中的 `AgentRuntime`
+
+两者合起来的职责是：
 
 1. 读取当前 session
 2. 写入用户消息
@@ -21,7 +28,7 @@
 6. 在需要时进入 requires_action
 7. 把结果写回 session 和 event log
 
-除了单次 `generate(...)` 外，当前 harness 还支持流式模型：
+除了单次 `generate(...)` 外，当前 runtime 还支持流式模型：
 
 - model 可实现 `stream_generate(...)`
 - harness 会把流式输出先映射成 `assistant_delta`
@@ -29,7 +36,7 @@
 
 ## Turn Lifecycle
 
-当前一次 turn 的典型事件顺序是：
+当前一次 turn 的典型事件顺序由 `RalphLoop` 推进：
 
 1. `turn_started`
 2. `assistant_message` 或 `tool_started`
@@ -48,7 +55,10 @@
 - timeout baseline
 - retry baseline
 
-这些控制通过 `TurnControl` 传入 harness，而不是散落成多个布尔参数。
+这些控制通过 `TurnControl` 传入 runtime，而不是散落成多个布尔参数。
+
+`SimpleHarness.run_turn(...)` 只是对 `run_turn_stream(...)` 的包装，不再维护第二套
+loop 语义。
 
 ## Context Governance Integration
 

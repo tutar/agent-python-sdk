@@ -1,0 +1,126 @@
+"""Anthropic-compatible model adapter implementations."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import cast
+
+from openagent.harness.models import ModelTurnRequest, ModelTurnResponse
+from openagent.harness.providers.base import (
+    HttpTransport,
+    ProviderError,
+    UrllibHttpTransport,
+)
+from openagent.object_model import JsonObject, JsonValue
+from openagent.tools import ToolCall
+
+
+@dataclass(slots=True)
+class AnthropicMessagesModelAdapter:
+    """Call an Anthropic-compatible `/v1/messages` endpoint."""
+
+    model: str
+    base_url: str
+    api_key: str | None = None
+    max_tokens: int = 1024
+    anthropic_version: str = "2023-06-01"
+    timeout_seconds: float = 60.0
+    transport: HttpTransport = field(default_factory=UrllibHttpTransport)
+
+    def generate(self, request: ModelTurnRequest) -> ModelTurnResponse:
+        response = self.transport.post_json(
+            self._endpoint_url(),
+            self._payload(request),
+            self._headers(),
+            self.timeout_seconds,
+        )
+        return self._parse_response(response.body)
+
+    def _endpoint_url(self) -> str:
+        return f"{self.base_url.rstrip('/')}/v1/messages"
+
+    def _headers(self) -> dict[str, str]:
+        headers = {"anthropic-version": self.anthropic_version}
+        if self.api_key:
+            headers["x-api-key"] = self.api_key
+        return headers
+
+    def _payload(self, request: ModelTurnRequest) -> JsonObject:
+        system_messages: list[str] = []
+        messages: list[JsonObject] = []
+        memory_blocks = [
+            str(memory.get("summary", memory.get("content", "")))
+            for memory in request.memory_context
+            if str(memory.get("summary", memory.get("content", "")))
+        ]
+        if memory_blocks:
+            system_messages.extend([f"Relevant memory: {item}" for item in memory_blocks])
+        for message in request.messages:
+            role = str(message.get("role", "user"))
+            content = str(message.get("content", ""))
+            metadata = message.get("metadata")
+            metadata_dict = dict(metadata) if isinstance(metadata, dict) else {}
+            if role == "system":
+                system_messages.append(content)
+                continue
+            if role == "tool":
+                tool_use_id = metadata_dict.get("tool_use_id")
+                if tool_use_id is not None:
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "tool_result",
+                                    "tool_use_id": str(tool_use_id),
+                                    "content": content,
+                                }
+                            ],
+                        }
+                    )
+                    continue
+            messages.append({"role": role, "content": content})
+        payload: JsonObject = {
+            "model": self.model,
+            "max_tokens": self.max_tokens,
+            "messages": cast(JsonValue, messages),
+        }
+        if system_messages:
+            payload["system"] = "\n\n".join(system_messages)
+        if request.tool_definitions:
+            tools_payload: list[JsonObject] = [
+                {
+                    "name": str(tool["name"]),
+                    "description": str(tool.get("description", "")),
+                    "input_schema": tool.get("input_schema", {}),
+                }
+                for tool in request.tool_definitions
+            ]
+            payload["tools"] = cast(JsonValue, tools_payload)
+        return payload
+
+    def _parse_response(self, body: JsonObject) -> ModelTurnResponse:
+        content = body.get("content")
+        if not isinstance(content, list):
+            raise ProviderError("Anthropic-compatible response did not include content blocks")
+        text_parts: list[str] = []
+        tool_calls: list[ToolCall] = []
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            block_type = str(block.get("type", ""))
+            if block_type == "text":
+                text_parts.append(str(block.get("text", "")))
+                continue
+            if block_type == "tool_use":
+                raw_input = block.get("input")
+                parsed_input = dict(raw_input) if isinstance(raw_input, dict) else {}
+                tool_calls.append(
+                    ToolCall(
+                        tool_name=str(block.get("name", "")),
+                        arguments=parsed_input,
+                        call_id=str(block.get("id")) if block.get("id") is not None else None,
+                    )
+                )
+        assistant_message = "".join(text_parts) or None
+        return ModelTurnResponse(assistant_message=assistant_message, tool_calls=tool_calls)

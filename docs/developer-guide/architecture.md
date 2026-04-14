@@ -29,8 +29,10 @@
   - terminal state
   - task record
 - `harness`
-  - turn execution
+  - `SimpleHarness` facade
+  - `RalphLoop` turn runtime
   - model input/output adaptation
+  - provider adapters under `harness/providers`
 - `memory`
   - durable memory recall and consolidation baseline
 - `session`
@@ -64,9 +66,10 @@
 2. bridge 把输入转成 JSON lines 协议
 3. `IngressGateway` 做 inbound normalization 和 session binding
 4. `InProcessSessionAdapter` 调用本地 runtime
-5. `SimpleHarness` 执行 turn
-6. tool execution、session event log、approval 状态在 runtime 内完成
-7. runtime events 再通过 gateway 投影回 frontend
+5. `SimpleHarness` 把 turn 交给显式的 `RalphLoop`
+6. `RalphLoop` 通过注入的 `ModelProviderAdapter` 调用 provider adapter 或 test double
+7. tool execution、session event log、approval 状态在 runtime 内完成
+8. runtime events 再通过 gateway 投影回 frontend
 
 ## Frontend Boundary
 
@@ -133,10 +136,15 @@ tool 事件由 executor 单点发出，harness 负责持久化这些事件，并
 
 ## Model Integration
 
-当前 harness 支持两类模型接入方式：
+当前 harness/runtime 支持两类模型接入方式：
 
 - `generate(...)`
 - `stream_generate(...)`
+
+真实 provider 当前放在 `harness/providers/`：
+
+- `OpenAIChatCompletionsModelAdapter`
+- `AnthropicMessagesModelAdapter`
 
 如果模型提供 `stream_generate(...)`，harness 会先产出 `assistant_delta` 事件，再汇总成最终
 `assistant_message`。
@@ -148,6 +156,10 @@ turn 级控制当前通过 `TurnControl` 暴露：
 - `cancellation_check`
 
 这还是本地 baseline，不是完整分布式控制协议。
+
+`SimpleHarness.run_turn(...)` 只是 convenience wrapper。
+真正的 turn 状态机在 `RalphLoop.run_turn_stream(...)` 中推进，和 spec 中的
+`AgentRuntime` 语义保持一致。
 
 ## Context Governance
 
