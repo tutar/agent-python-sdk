@@ -2,6 +2,21 @@
 
 from openagent.session.enums import SessionStatus
 from openagent.session.interfaces import SessionStore, ShortTermMemoryStore
+from openagent.session.memory import (
+    DurableMemoryExtractor,
+    DurableMemoryStore,
+    FileMemoryStore,
+    InMemoryMemoryStore,
+    MemoryConsolidationJob,
+    MemoryConsolidationResult,
+    MemoryConsolidator,
+    MemoryRecallEngine,
+    MemoryRecallHandle,
+    MemoryRecallResult,
+    MemoryRecord,
+    MemoryScope,
+    MemoryStore,
+)
 from openagent.session.models import (
     ResumeSnapshot,
     SessionCheckpoint,
@@ -20,10 +35,23 @@ from openagent.session.store import (
 )
 
 __all__ = [
+    "DurableMemoryExtractor",
+    "DurableMemoryStore",
+    "FileMemoryStore",
     "FileSessionStore",
     "FileShortTermMemoryStore",
+    "InMemoryMemoryStore",
     "InMemorySessionStore",
     "InMemoryShortTermMemoryStore",
+    "MemoryConsolidationJob",
+    "MemoryConsolidationResult",
+    "MemoryConsolidator",
+    "MemoryRecallEngine",
+    "MemoryRecallHandle",
+    "MemoryRecallResult",
+    "MemoryRecord",
+    "MemoryScope",
+    "MemoryStore",
     "ResumeSnapshot",
     "SessionCheckpoint",
     "SessionCursor",

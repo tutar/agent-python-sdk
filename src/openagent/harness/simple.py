@@ -25,7 +25,6 @@ from openagent.harness.models import (
     TurnControl,
 )
 from openagent.harness.runtime import RalphLoop
-from openagent.memory import MemoryStore
 from openagent.object_model import (
     JsonObject,
     RuntimeEvent,
@@ -35,6 +34,7 @@ from openagent.object_model import (
     ToolResult,
 )
 from openagent.session import (
+    MemoryStore,
     SessionMessage,
     SessionRecord,
     SessionStatus,

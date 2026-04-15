@@ -33,14 +33,13 @@
   - `RalphLoop` turn runtime
   - model input/output adaptation
   - provider adapters under `harness/providers`
-- `memory`
-  - scoped durable memory recall and consolidation baseline
 - `session`
   - session record
   - event log
   - checkpoint
   - replay
   - short-term session memory
+  - `session.memory` scoped durable memory recall and consolidation baseline
 - `tools`
   - tool registry
   - tool executor

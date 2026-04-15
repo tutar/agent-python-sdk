@@ -49,16 +49,6 @@ from openagent.harness import (
     UrllibHttpTransport,
     load_model_from_env,
 )
-from openagent.memory import (
-    FileMemoryStore,
-    InMemoryMemoryStore,
-    MemoryConsolidationJob,
-    MemoryConsolidationResult,
-    MemoryRecallHandle,
-    MemoryRecallResult,
-    MemoryRecord,
-    MemoryScope,
-)
 from openagent.object_model import (
     CapabilityView,
     JsonObject,
@@ -95,10 +85,18 @@ from openagent.sandbox import (
     SandboxNegotiationResult,
 )
 from openagent.session import (
+    FileMemoryStore,
     FileSessionStore,
     FileShortTermMemoryStore,
+    InMemoryMemoryStore,
     InMemorySessionStore,
     InMemoryShortTermMemoryStore,
+    MemoryConsolidationJob,
+    MemoryConsolidationResult,
+    MemoryRecallHandle,
+    MemoryRecallResult,
+    MemoryRecord,
+    MemoryScope,
     ResumeSnapshot,
     SessionCheckpoint,
     SessionCursor,

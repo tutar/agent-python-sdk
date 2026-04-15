@@ -3,7 +3,6 @@ from pathlib import Path
 from typing import Any
 
 from openagent.harness import ModelTurnRequest, ModelTurnResponse, SimpleHarness
-from openagent.memory import FileMemoryStore
 from openagent.object_model import JsonObject, RuntimeEventType, TerminalStatus, ToolResult
 from openagent.orchestration import (
     BackgroundTaskContext,
@@ -12,6 +11,7 @@ from openagent.orchestration import (
 )
 from openagent.sandbox import LocalSandbox, SandboxExecutionRequest
 from openagent.session import (
+    FileMemoryStore,
     FileSessionStore,
     InMemorySessionStore,
     SessionMessage,

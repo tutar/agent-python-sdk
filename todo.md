@@ -122,6 +122,7 @@
 
 ### Memory
 
+- `memory` now lives under `session.memory`; it is not a top-level package anymore
 - Deepen extraction policy beyond the current transcript slice baseline
 - Add background dream / cross-session consolidation semantics
 - Add richer recall ranking and scoping

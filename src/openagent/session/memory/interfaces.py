@@ -5,14 +5,14 @@ from __future__ import annotations
 import builtins
 from typing import Protocol
 
-from openagent.memory.models import (
+from openagent.session.memory.models import (
     MemoryConsolidationJob,
     MemoryConsolidationResult,
     MemoryRecallHandle,
     MemoryRecallResult,
     MemoryRecord,
 )
-from openagent.session import SessionMessage
+from openagent.session.models import SessionMessage
 
 
 class DurableMemoryStore(Protocol):

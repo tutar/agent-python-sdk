@@ -1,13 +1,13 @@
-"""Durable memory baseline exports."""
+"""Session-scoped durable memory exports."""
 
-from openagent.memory.interfaces import (
+from openagent.session.memory.interfaces import (
     DurableMemoryExtractor,
     DurableMemoryStore,
     MemoryConsolidator,
     MemoryRecallEngine,
     MemoryStore,
 )
-from openagent.memory.models import (
+from openagent.session.memory.models import (
     MemoryConsolidationJob,
     MemoryConsolidationResult,
     MemoryRecallHandle,
@@ -15,7 +15,7 @@ from openagent.memory.models import (
     MemoryRecord,
     MemoryScope,
 )
-from openagent.memory.store import FileMemoryStore, InMemoryMemoryStore
+from openagent.session.memory.store import FileMemoryStore, InMemoryMemoryStore
 
 __all__ = [
     "DurableMemoryExtractor",

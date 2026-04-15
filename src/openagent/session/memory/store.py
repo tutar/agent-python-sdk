@@ -7,10 +7,10 @@ import json
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
-from threading import Lock
 from typing import cast
 
-from openagent.memory.models import (
+from openagent.object_model import JsonValue
+from openagent.session.memory.models import (
     MemoryConsolidationJob,
     MemoryConsolidationResult,
     MemoryRecallHandle,
@@ -18,8 +18,7 @@ from openagent.memory.models import (
     MemoryRecord,
     MemoryScope,
 )
-from openagent.object_model import JsonValue
-from openagent.session import SessionMessage
+from openagent.session.models import SessionMessage
 
 
 class InMemoryMemoryStore:
@@ -32,7 +31,6 @@ class InMemoryMemoryStore:
         self._jobs: dict[str, tuple[str, list[SessionMessage]]] = {}
         self._pending_jobs: dict[str, Future[MemoryConsolidationResult]] = {}
         self._executor = ThreadPoolExecutor(max_workers=2)
-        self._lock = Lock()
 
     def put(self, record: MemoryRecord) -> str:
         self.upsert_memory(record)
@@ -41,15 +39,7 @@ class InMemoryMemoryStore:
     def update_memory(self, memory_id: str, patch: dict[str, object]) -> MemoryRecord:
         record = self._records[memory_id]
         updated_data = record.to_dict()
-        updated_data.update(
-            {
-                str(key): cast(
-                    JsonValue,
-                    value,
-                )
-                for key, value in patch.items()
-            }
-        )
+        updated_data.update({str(key): cast(JsonValue, value) for key, value in patch.items()})
         updated = MemoryRecord.from_dict(updated_data)
         updated.updated_at = datetime.now(UTC).isoformat()
         self._records[memory_id] = updated
@@ -58,7 +48,7 @@ class InMemoryMemoryStore:
     def delete(self, memory_id: str) -> bool:
         return self._records.pop(memory_id, None) is not None
 
-    def list(self, selector: dict[str, object] | None = None) -> builtins.list[MemoryRecord]:
+    def list(self, selector: dict[str, object] | None = None) -> list[MemoryRecord]:
         if selector is None:
             return list(self._records.values())
         scope = selector.get("scope")
@@ -214,10 +204,7 @@ class InMemoryMemoryStore:
         for record in self._records.values():
             if selected_scopes is not None and record.scope.value not in selected_scopes:
                 continue
-            if record.session_id is not None and record.session_id == session_id:
-                bonus = 1
-            else:
-                bonus = 0
+            bonus = 1 if record.session_id is not None and record.session_id == session_id else 0
             haystack = f"{record.title} {record.content} {record.summary}".lower()
             score = sum(1 for token in tokens if token in haystack) + bonus
             if score > 0 or not tokens:
