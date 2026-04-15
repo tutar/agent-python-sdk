@@ -3,11 +3,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from openagent.gateway import (
+    ChannelAdapter,
     ChannelIdentity,
+    DesktopChannelAdapter,
     FileSessionBindingStore,
     Gateway,
     InboundEnvelope,
     InProcessSessionAdapter,
+    TerminalChannelAdapter,
 )
 from openagent.harness import ModelTurnRequest, ModelTurnResponse
 from openagent.object_model import RuntimeEventType, ToolResult
@@ -103,6 +106,17 @@ class ToolProgressModel:
         )
 
 
+@dataclass(slots=True)
+class FilteringTerminalChannelAdapter:
+    channel_type: str = "terminal"
+
+    def accepted_event_types(self) -> list[str]:
+        return [
+            RuntimeEventType.ASSISTANT_MESSAGE.value,
+            RuntimeEventType.TURN_COMPLETED.value,
+        ]
+
+
 def test_tui_gateway_processes_user_message() -> None:
     gateway = TuiProfile().create_gateway(model=StaticModel(message="hello via gateway"))
     channel = ChannelIdentity(
@@ -126,6 +140,19 @@ def test_tui_gateway_processes_user_message() -> None:
     assert isinstance(payload, dict)
     assert payload["message"] == "hello via gateway"
     assert egress[-1].event["event_type"] == RuntimeEventType.TURN_COMPLETED.value
+
+
+def test_tui_profile_registers_terminal_channel_defaults() -> None:
+    gateway = TuiProfile().create_gateway(model=StaticModel(message="hello via gateway"))
+    channel = ChannelIdentity(
+        channel_type="terminal",
+        user_id="user_tui_default",
+        conversation_id="conv_tui_default",
+    )
+
+    binding = gateway.bind_session(channel, "sess_gateway_tui_default")
+
+    assert binding.event_types == TerminalChannelAdapter().accepted_event_types()
 
 
 def test_desktop_gateway_uses_file_backed_runtime(tmp_path: Path) -> None:
@@ -154,14 +181,32 @@ def test_desktop_gateway_uses_file_backed_runtime(tmp_path: Path) -> None:
     assert egress[-1].event["event_type"] == RuntimeEventType.TURN_COMPLETED.value
 
 
+def test_desktop_profile_registers_desktop_channel_defaults(tmp_path: Path) -> None:
+    gateway = DesktopProfile().create_gateway(
+        model=StaticModel(message="desktop gateway"),
+        session_root=str(tmp_path / "desktop_sessions"),
+    )
+    channel = ChannelIdentity(
+        channel_type="desktop",
+        user_id="user_desktop_default",
+        conversation_id="conv_desktop_default",
+    )
+
+    binding = gateway.bind_session(channel, "sess_gateway_desktop_default")
+
+    assert binding.event_types == DesktopChannelAdapter().accepted_event_types()
+
+
 def test_gateway_route_control_accepts_known_subtypes() -> None:
     gateway = TuiProfile().create_gateway(model=StaticModel(message="noop"))
 
     accepted = gateway.route_control({"subtype": "permission_response"})
+    accepted_resume = gateway.route_control({"subtype": "resume"})
     accepted_mode_change = gateway.route_control({"subtype": "mode_change"})
     rejected = gateway.route_control({"subtype": "unknown"})
 
     assert accepted["accepted"] is True
+    assert accepted_resume["accepted"] is True
     assert accepted_mode_change["accepted"] is True
     assert rejected["accepted"] is False
 
@@ -287,6 +332,69 @@ def test_gateway_filters_and_replays_projected_events() -> None:
     assert binding.checkpoint_event_offset == 3
 
 
+def test_gateway_registers_channel_defaults_for_bindings() -> None:
+    runtime = TuiProfile().create_runtime(model=StaticModel(message="hello"))
+    gateway = Gateway(InProcessSessionAdapter(runtime))
+    channel_adapter: ChannelAdapter = FilteringTerminalChannelAdapter()
+    channel = ChannelIdentity(
+        channel_type="terminal",
+        user_id="user_default_events",
+        conversation_id="conv_default_events",
+    )
+
+    gateway.register_channel(channel_adapter)
+    binding = gateway.bind_session(channel, "sess_default_events")
+
+    assert binding.event_types == [
+        RuntimeEventType.ASSISTANT_MESSAGE.value,
+        RuntimeEventType.TURN_COMPLETED.value,
+    ]
+
+
+def test_gateway_resumes_bound_session_from_explicit_offset() -> None:
+    gateway = TuiProfile().create_gateway(model=StaticModel(message="resume replay"))
+    channel = ChannelIdentity(
+        channel_type="terminal",
+        user_id="user_resume",
+        conversation_id="conv_resume",
+    )
+    gateway.bind_session(channel, "sess_gateway_resume")
+    gateway.process_user_message(
+        InboundEnvelope(
+            channel_identity=channel.to_dict(),
+            input_kind="user_message",
+            payload={"content": "hi"},
+        )
+    )
+
+    replay = gateway.resume_bound_session(channel, after=0)
+
+    assert replay[0].event["event_type"] == RuntimeEventType.TURN_STARTED.value
+    assert replay[-1].event["event_type"] == RuntimeEventType.TURN_COMPLETED.value
+
+
+def test_gateway_process_control_resume_replays_events() -> None:
+    gateway = TuiProfile().create_gateway(model=StaticModel(message="resume control"))
+    channel = ChannelIdentity(
+        channel_type="terminal",
+        user_id="user_resume_control",
+        conversation_id="conv_resume_control",
+    )
+    gateway.bind_session(channel, "sess_gateway_resume_control")
+    gateway.process_user_message(
+        InboundEnvelope(
+            channel_identity=channel.to_dict(),
+            input_kind="user_message",
+            payload={"content": "hi"},
+        )
+    )
+
+    replay = gateway.process_control_message(channel, {"subtype": "resume", "after": 0})
+
+    assert replay[0].event["event_type"] == RuntimeEventType.TURN_STARTED.value
+    assert replay[-1].event["event_type"] == RuntimeEventType.TURN_COMPLETED.value
+
+
 def test_gateway_restores_persisted_binding_after_restart(tmp_path: Path) -> None:
     binding_root = tmp_path / "bindings"
     first_gateway = TuiProfile().create_gateway(
@@ -328,6 +436,28 @@ def test_gateway_restores_persisted_binding_after_restart(tmp_path: Path) -> Non
     assert restored_binding is not None
     assert restored_binding.checkpoint_event_offset >= 3
     assert restored_binding.checkpoint_last_event_id is not None
+
+
+def test_gateway_get_binding_restores_persisted_binding(tmp_path: Path) -> None:
+    binding_root = tmp_path / "bindings"
+    first_gateway = TuiProfile().create_gateway(
+        model=StaticModel(message="hello binding"),
+        binding_root=str(binding_root),
+    )
+    channel = ChannelIdentity(
+        channel_type="terminal",
+        user_id="user_binding_restore",
+        conversation_id="conv_binding_restore",
+    )
+    first_gateway.bind_session(channel, "sess_binding_restore")
+
+    restored_gateway = TuiProfile().create_gateway(
+        model=StaticModel(message="hello binding"),
+        binding_root=str(binding_root),
+    )
+    restored = restored_gateway.get_binding("terminal", "conv_binding_restore")
+
+    assert restored.session_id == "sess_binding_restore"
 
 
 def test_desktop_gateway_persists_binding_store_by_default(tmp_path: Path) -> None:

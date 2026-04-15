@@ -18,6 +18,7 @@ gateway 的作用是把 frontend 看到的世界收敛成：
 - session binding
 - control routing
 - egress projection
+- channel-specific default projection policy
 
 ## Current Main Path
 
@@ -31,6 +32,17 @@ gateway 的作用是把 frontend 看到的世界收敛成：
 - bridge 负责 stdio JSON lines
 - gateway 负责协议归一化
 - session adapter 负责把 frontend session 映射到 runtime session
+
+当前 `Gateway` 已拆成独立包：
+
+- `core.py`
+- `models.py`
+- `interfaces.py`
+- `adapters.py`
+- `binding_store.py`
+- `session_adapter.py`
+- `control.py`
+- `projector.py`
 
 ## Session Binding
 
@@ -53,6 +65,15 @@ binding 现在还会同步：
 
 这让 gateway 在重启或 replay 后能够知道当前前端绑定到的是 session 的哪个 durable 位置。
 
+当前还支持：
+
+- `get_binding(...)`
+- `observe_session(...)`
+- `resume_bound_session(...)`
+- `control.subtype=resume`
+
+其中 `resume` 用于 channel reconnect 后重放当前已 durable 的 session 事件。
+
 ## Egress Projection
 
 runtime 内部产生的是 `RuntimeEvent`。
@@ -64,6 +85,13 @@ frontend 实际拿到的是 `EgressEnvelope`。
 - 把 runtime 事件包装成 channel-aware 输出
 - 做 event filtering
 - 保留 frontend 真正关心的 session/conversation 信息
+
+当前内置了两种本地 channel adapter：
+
+- `TerminalChannelAdapter`
+- `DesktopChannelAdapter`
+
+它们当前不负责原始协议收发，只负责声明默认投影事件集，让 gateway 在 `bind_session(...)` 时自动得到 channel 级默认过滤规则。
 
 ## Why The Bridge Is In Python
 
@@ -96,7 +124,8 @@ terminal TUI 当前内部负责：
 
 ## Current Limitation
 
-当前 gateway / frontend 这层还没补齐：
+当前 gateway / frontend 这层仍有待增强的部分：
 
-- 更完整的 host mode semantics
-- 更丰富的 frontend channel adapter 抽象
+- richer bridge transport abstraction
+- more complete reconnect cursor / dedup semantics
+- channel-native outbound projection for non-local adapters

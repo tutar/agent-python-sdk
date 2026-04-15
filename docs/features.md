@@ -193,15 +193,23 @@ gateway 是 frontend 的稳定接入边界。
 当前支持：
 
 - inbound normalization
+- built-in `TerminalChannelAdapter`
+- built-in `DesktopChannelAdapter`
+- built-in `FeishuChannelAdapter`
+- channel-specific default event projection
 - session binding
 - file-backed session binding persistence
 - binding-level session checkpoint tracking
 - user message processing
 - permission continuation
 - interrupt control
+- resume control
 - mode change control routing baseline
 - projected event filtering
 - session replay observation
+- bound-session replay via `resume_bound_session(...)`
+- command-style control projection for chat channels
+- Feishu long-connection host baseline
 
 frontend 当前应通过 `Gateway` 使用 agent，不应该直接持有 harness。
 
@@ -216,6 +224,7 @@ terminal TUI 当前基于 `React + Ink + Yoga`。
 - 消息发送
 - tool demo
 - requires_action 审批
+- `/resume` 事件回放
 - 事件日志面板
 - session 状态面板
 - 非 TTY 环境下的安全降级

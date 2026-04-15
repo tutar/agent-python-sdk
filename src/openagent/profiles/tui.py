@@ -5,7 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from openagent.context_governance import ContextGovernance
-from openagent.gateway import FileSessionBindingStore, Gateway, InProcessSessionAdapter
+from openagent.gateway import (
+    FileSessionBindingStore,
+    Gateway,
+    InProcessSessionAdapter,
+    TerminalChannelAdapter,
+)
 from openagent.harness import ModelProviderAdapter, SimpleHarness
 from openagent.harness.providers import load_model_from_env
 from openagent.orchestration import FileTaskManager, InMemoryTaskManager
@@ -45,7 +50,9 @@ class TuiProfile:
     ) -> Gateway:
         runtime = self.create_runtime(model=model, tools=tools)
         binding_store = FileSessionBindingStore(binding_root) if binding_root is not None else None
-        return Gateway(InProcessSessionAdapter(runtime), binding_store=binding_store)
+        gateway = Gateway(InProcessSessionAdapter(runtime), binding_store=binding_store)
+        gateway.register_channel(TerminalChannelAdapter())
+        return gateway
 
     def create_runtime_from_env(
         self,

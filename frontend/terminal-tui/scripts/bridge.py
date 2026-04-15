@@ -230,16 +230,18 @@ def main() -> None:
 
         if kind == "control":
             subtype = str(message.get("subtype", ""))
-            if subtype not in {"permission_response", "interrupt"}:
+            if subtype not in {"permission_response", "interrupt", "resume"}:
                 emit_error("unknown_control_subtype")
                 continue
             channel = sessions[current_session_name]
+            control_payload: dict[str, object] = {"subtype": subtype}
+            if subtype == "permission_response":
+                control_payload["approved"] = bool(message.get("approved", False))
+            if subtype == "resume" and message.get("after") is not None:
+                control_payload["after"] = message.get("after")
             egress = gateway.process_control_message(
                 channel,
-                {
-                    "subtype": subtype,
-                    "approved": bool(message.get("approved", False)),
-                },
+                control_payload,
             )
             for item in egress:
                 emit(

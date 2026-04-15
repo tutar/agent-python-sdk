@@ -5,6 +5,10 @@
 - Python SDK：`src/openagent`
 - terminal TUI：`frontend/terminal-tui`
 
+另外当前也提供飞书接入基线：
+
+- Feishu gateway host：`openagent.gateway.feishu`
+
 当前推荐的主流程是：
 
 1. 安装 Python 开发依赖
@@ -119,6 +123,7 @@ npm run dev
 - `/sessions`：查看当前已知 session
 - `/new ops`：创建并切换到新 session
 - `/switch main`：切回已有 session
+- `/resume`：回放当前 session 的事件流
 
 建议先按这个顺序验证：
 
@@ -127,6 +132,7 @@ npm run dev
 3. 输入 `admin rotate`
 4. 输入 `/approve`
 5. 输入 `/sessions`
+6. 输入 `/resume`
 
 ## Important Architecture Boundary
 
@@ -142,3 +148,29 @@ terminal TUI 通过本地 stdio bridge 接入 Python gateway：
 
 - 运行时能力说明：[`features.md`](./features.md)
 - 继续开发 SDK：[`developer-guide/README.md`](./developer-guide/README.md)
+
+## Start The Feishu Host
+
+飞书接入第一版走长连接 host，不经过 TUI：
+
+```bash
+export OPENAGENT_FEISHU_APP_ID=cli_xxx
+export OPENAGENT_FEISHU_APP_SECRET=xxx
+export OPENAGENT_PROVIDER=openai
+export OPENAGENT_BASE_URL=http://127.0.0.1:8001
+export OPENAGENT_MODEL=gpt-4.1
+python -m openagent.cli.feishu
+```
+
+如果是从已安装包运行，也可以使用：
+
+```bash
+openagent-feishu
+```
+
+默认行为：
+
+- 私聊消息直接进入 agent
+- 群聊消息只有 `@机器人` 才触发
+- `/approve`、`/reject`、`/interrupt`、`/resume` 会作为 control 注入 gateway
+- session 和 binding 默认走文件持久化，可跨重启恢复

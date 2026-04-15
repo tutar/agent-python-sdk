@@ -22,13 +22,20 @@ from openagent.context_governance import (
 from openagent.gateway import (
     ChannelIdentity,
     EgressEnvelope,
+    FeishuAppConfig,
+    FeishuChannelAdapter,
+    FeishuLongConnectionHost,
     FileSessionBindingStore,
     Gateway,
     InboundEnvelope,
     InProcessSessionAdapter,
     LocalSessionHandle,
     NormalizedInboundMessage,
+    OfficialFeishuBotClient,
     SessionBinding,
+    create_feishu_gateway,
+    create_feishu_host_from_env,
+    create_feishu_runtime,
 )
 from openagent.harness import (
     AgentRuntime,
@@ -75,6 +82,7 @@ from openagent.profiles import (
     DesktopExtension,
     DesktopExtensionManager,
     DesktopProfile,
+    FeishuProfile,
     TuiProfile,
 )
 from openagent.sandbox import (
@@ -167,6 +175,10 @@ __all__ = [
     "FileSessionStore",
     "FileShortTermMemoryStore",
     "FileSessionBindingStore",
+    "FeishuAppConfig",
+    "FeishuChannelAdapter",
+    "FeishuLongConnectionHost",
+    "FeishuProfile",
     "Gateway",
     "FileSkillRegistry",
     "FileTaskManager",
@@ -212,6 +224,7 @@ __all__ = [
     "MemoryScope",
     "ModelStreamEvent",
     "NormalizedInboundMessage",
+    "OfficialFeishuBotClient",
     "OpenAIChatCompletionsModelAdapter",
     "PermissionDecision",
     "PromptCachePlan",
@@ -268,5 +281,8 @@ __all__ = [
     "TurnState",
     "WakeRequest",
     "LocalTaskKind",
+    "create_feishu_gateway",
+    "create_feishu_host_from_env",
+    "create_feishu_runtime",
     "__version__",
 ]

@@ -46,7 +46,7 @@ const sdkRoot = path.resolve(__dirname, '../../');
 const pythonBin = process.env.PYTHON ?? 'python3';
 const lineLimit = 20;
 const helpText =
-	'Commands: tool <text>, admin <text>, /new <name>, /switch <name>, /sessions, /approve, /reject, /interrupt, /session, /clear, /help, /exit';
+	'Commands: tool <text>, admin <text>, /new <name>, /switch <name>, /sessions, /resume, /approve, /reject, /interrupt, /session, /clear, /help, /exit';
 const interactiveTerminal = Boolean(process.stdin.isTTY && process.stdout.isTTY);
 
 type ShellProps = {
@@ -255,6 +255,12 @@ function InteractiveShell({
 			}
 			if (text === '/sessions') {
 				send({kind: 'list_sessions'});
+				setInput('');
+				return;
+			}
+			if (text === '/resume') {
+				send({kind: 'control', subtype: 'resume', after: 0});
+				pushLine('system> replay requested from event 0');
 				setInput('');
 				return;
 			}
