@@ -27,6 +27,13 @@
   - `lark-cli` 真实消息联调
   - 飞书服务到 gateway 的链路验证
   - host 日志观测点与 smoke checklist
+- [Feishu E2E Tests](./feishu-e2e-tests.md)
+  - 可执行的本地真实网络测试
+  - `pytest -m feishu_e2e`
+  - 私聊与指定群聊验证
+- [Pre-Merge Checklist](./pre-merge-checklist.md)
+  - 合入 `main` 前的最终验收顺序
+  - Python / TUI / Feishu E2E / 文档同步检查
 - [Internals](./internals/README.md)
   - 逐模块解释 object model、harness、session、tools、gateway、sandbox 和 orchestration
   - 包括 model integration / providers 边界

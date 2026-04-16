@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import fcntl
 import importlib
 import json
 import os
 import traceback
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -34,6 +36,7 @@ class FeishuAppConfig:
     app_secret: str
     session_root: str
     binding_root: str
+    lock_root: str = str(Path("/tmp") / "openagent-feishu-locks")
     mention_required_in_group: bool = True
 
     @classmethod
@@ -55,14 +58,55 @@ class FeishuAppConfig:
             "OPENAGENT_BINDING_ROOT",
             str(Path(session_root) / "bindings"),
         )
+        lock_root = os.getenv(
+            "OPENAGENT_FEISHU_LOCK_ROOT",
+            str(Path("/tmp") / "openagent-feishu-locks"),
+        )
         mention_required = os.getenv("OPENAGENT_FEISHU_GROUP_AT_ONLY", "true").lower() != "false"
         return cls(
             app_id=app_id,
             app_secret=app_secret,
             session_root=session_root,
             binding_root=binding_root,
+            lock_root=lock_root,
             mention_required_in_group=mention_required,
         )
+
+
+@dataclass(slots=True)
+class FeishuHostRunLock:
+    """Prevent multiple local hosts from consuming the same Feishu app stream."""
+
+    app_id: str
+    lock_root: str
+    _handle: Any | None = None
+
+    def acquire(self) -> None:
+        """Acquire a non-blocking local process lock for this Feishu app."""
+
+        Path(self.lock_root).mkdir(parents=True, exist_ok=True)
+        handle = open(Path(self.lock_root) / f"{self.app_id}.lock", "w", encoding="utf-8")
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            handle.close()
+            raise RuntimeError(
+                "Another local Feishu host is already running for this app_id. "
+                "Stop the existing process before starting a second host."
+            ) from exc
+        handle.write(str(os.getpid()))
+        handle.flush()
+        self._handle = handle
+
+    def release(self) -> None:
+        """Release the local process lock when the host stops."""
+
+        if self._handle is None:
+            return
+        with suppress(OSError):
+            fcntl.flock(self._handle.fileno(), fcntl.LOCK_UN)
+        self._handle.close()
+        self._handle = None
 
 
 class FeishuBotClient(Protocol):
@@ -125,7 +169,11 @@ class FeishuChannelAdapter:
         raw_text = self._extract_text_content(message.get("content"))
         mentions = self._extract_mentions(message)
 
-        if chat_type != "p2p" and self.mention_required_in_group and not mentions:
+        if (
+            chat_type != "p2p"
+            and self.mention_required_in_group
+            and not self._has_group_mention(raw_text, mentions)
+        ):
             return None
 
         text = self._strip_mentions(raw_text, mentions).strip()
@@ -286,9 +334,26 @@ class FeishuChannelAdapter:
             if name is not None:
                 normalized = normalized.replace(f"@{name}", "")
             if key is not None:
+                normalized = normalized.replace(str(key), "")
                 normalized = normalized.replace(f"<at user_id=\"{key}\"></at>", "")
                 normalized = normalized.replace(f"<at user_id={key}></at>", "")
+        normalized = self._strip_textual_leading_mention(normalized)
         return " ".join(normalized.split())
+
+    def _has_group_mention(self, text: str, mentions: list[JsonObject]) -> bool:
+        if mentions:
+            return True
+        stripped = text.strip()
+        return stripped.startswith("@") and " " in stripped
+
+    def _strip_textual_leading_mention(self, text: str) -> str:
+        stripped = text.lstrip()
+        if not stripped.startswith("@"):
+            return text
+        parts = stripped.split(maxsplit=1)
+        if len(parts) == 1:
+            return ""
+        return parts[1]
 
     def _clear_tool_progress(self, session_id: str, tool_name: str) -> None:
         self._progress_seen.pop((session_id, tool_name), None)
@@ -306,12 +371,19 @@ class FeishuLongConnectionHost:
     gateway: Gateway
     adapter: FeishuChannelAdapter
     client: FeishuBotClient
+    run_lock: FeishuHostRunLock | None = None
 
     def run(self) -> None:
         """Start the underlying Feishu long-connection client."""
 
+        if self.run_lock is not None:
+            self.run_lock.acquire()
         print("feishu-host> starting long connection", flush=True)
-        self.client.start(self.handle_event)
+        try:
+            self.client.start(self.handle_event)
+        finally:
+            if self.run_lock is not None:
+                self.run_lock.release()
 
     def close(self) -> None:
         """Close the underlying Feishu long-connection client."""
@@ -536,7 +608,12 @@ def create_feishu_host_from_env() -> FeishuLongConnectionHost:
         mention_required_in_group=config.mention_required_in_group,
     )
     gateway.register_channel(adapter)
-    return FeishuLongConnectionHost(gateway=gateway, adapter=adapter, client=client)
+    return FeishuLongConnectionHost(
+        gateway=gateway,
+        adapter=adapter,
+        client=client,
+        run_lock=FeishuHostRunLock(config.app_id, config.lock_root),
+    )
 
 
 def main() -> None:

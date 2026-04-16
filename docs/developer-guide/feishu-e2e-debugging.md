@@ -31,8 +31,8 @@
 
 当前不覆盖：
 
-- 群聊
-- `@mention`
+- 群聊自动化
+- `@mention` 自动化
 - thread 深入联调
 - 自动化真实网络测试
 
@@ -123,7 +123,13 @@ lark-cli messenger <subcommand> --help
 
 ## Send A Real Message
 
-确认 Python host 已启动后，用 `lark-cli` 给机器人发一条私聊消息。消息发送命令请以当前版本帮助输出为准。
+确认 Python host 已启动后，用 `lark-cli` 给机器人发一条私聊消息。当前已经验证过的自动化路径是直接向既有私聊 `chat_id` 发消息：
+
+```bash
+lark-cli im +messages-send --as user --chat-id <p2p_chat_id> --text hello
+```
+
+消息发送命令仍以你本机版本帮助输出为准。
 
 建议第一条消息内容直接使用：
 
@@ -220,10 +226,11 @@ No active session is bound for this chat yet. Send a normal message first.
 
 1. `lark-cli auth status` 是否显示当前账号已登录
 2. Python host 是否已经打印 `feishu-host> starting long connection`
-3. 环境变量 `OPENAGENT_FEISHU_APP_ID` 和 `OPENAGENT_FEISHU_APP_SECRET` 是否正确
-4. provider 是否可用，特别是 `OPENAGENT_BASE_URL` 和 `OPENAGENT_MODEL`
-5. host 是否打印了 `received raw event`
-6. host 是否打印了 `sdk send_text`
+3. 同一台机器上是否已经有另一个 `openagent-feishu` / `python -m openagent.cli.feishu_e2e` 在运行
+4. 环境变量 `OPENAGENT_FEISHU_APP_ID` 和 `OPENAGENT_FEISHU_APP_SECRET` 是否正确
+5. provider 是否可用，特别是 `OPENAGENT_BASE_URL` 和 `OPENAGENT_MODEL`
+6. host 是否打印了 `received raw event`
+7. host 是否打印了 `sdk send_text`
 
 如果看到了 `received raw event` 但没有回复，重点检查：
 
@@ -235,6 +242,11 @@ No active session is bound for this chat yet. Send a normal message first.
 
 - 当前 chat 是否已经通过普通消息建立过 session
 - 发出的命令是否是 `/approve`、`/reject`、`/interrupt`、`/resume`
+
+如果私聊正常、但群聊 `@openagent` 完全没有任何 `received raw event`，优先检查飞书开放平台里的群消息事件投递配置。
+当前 SDK 的群聊 E2E 代码路径已经准备好，但如果应用侧没有把群消息投递给 bot，Python host 端不会收到任何原始事件。
+
+如果启动 host 时直接报“Another local Feishu host is already running for this app_id”，说明同一台机器上已经有另一个进程占用了这只 bot 的长连接。先停掉旧进程，再继续联调。
 
 ## Related Docs
 

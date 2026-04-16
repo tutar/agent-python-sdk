@@ -68,6 +68,9 @@ npm run type-check
 - `frontend/terminal-tui: npm ci`
 - `frontend/terminal-tui: npm run type-check`
 
+真实飞书链路不进入默认 GitHub CI。
+合入 `main` 前请额外按 [`pre-merge-checklist.md`](./pre-merge-checklist.md) 执行本地 Feishu E2E 验收。
+
 ## Coding Standards
 
 ### Python

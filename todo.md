@@ -137,6 +137,9 @@
 
 - Harden the explicit `terminal-tui` channel adapter baseline
 - Extend control routing from baseline support to richer host mode semantics
+- Finish Feishu group-chat E2E after app-side group message event delivery is enabled
+  - private-chat E2E is already automated and validated with `lark-cli --as user --chat-id <p2p_chat_id>`
+  - group-chat test path exists, but real verification is still blocked until the Feishu app actually receives group raw events
 
 ### Orchestration
 

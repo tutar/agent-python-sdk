@@ -197,3 +197,4 @@ lark-cli auth status
 完整联调步骤、日志观测点和 smoke checklist 见：
 
 - [`developer-guide/feishu-e2e-debugging.md`](./developer-guide/feishu-e2e-debugging.md)
+- [`developer-guide/feishu-e2e-tests.md`](./developer-guide/feishu-e2e-tests.md)

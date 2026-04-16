@@ -33,6 +33,10 @@ packages = ["src/openagent"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+  "feishu_e2e: local real-network Feishu/Lark end-to-end tests",
+  "feishu_group_e2e: local real-network Feishu/Lark group-chat end-to-end tests",
+]
 
 [tool.ruff]
 target-version = "py311"
