@@ -159,6 +159,35 @@ def test_builtin_tools_validate_required_arguments() -> None:
             raise AssertionError(f"Expected ToolExecutionFailedError for {tool_name}")
 
 
+def test_builtin_tools_expose_complete_json_schema() -> None:
+    toolset = {tool.name: tool for tool in create_builtin_toolset()}
+
+    for tool_name, field_name in [
+        ("Read", "path"),
+        ("Write", "path"),
+        ("Edit", "path"),
+        ("Glob", "pattern"),
+        ("Grep", "pattern"),
+        ("Bash", "command"),
+        ("WebFetch", "url"),
+        ("WebSearch", "query"),
+        ("AskUserQuestion", "question"),
+    ]:
+        schema = toolset[tool_name].input_schema
+        assert schema["type"] == "object"
+        assert schema["additionalProperties"] is False
+        properties = schema["properties"]
+        assert isinstance(properties, dict)
+        assert field_name in properties
+        field_schema = properties[field_name]
+        assert isinstance(field_schema, dict)
+        assert field_schema["type"] == "string"
+        assert isinstance(field_schema["description"], str)
+        assert field_schema["description"]
+        assert isinstance(field_schema["examples"], list)
+        assert field_name in schema["required"]
+
+
 def test_bash_tool_executes_successfully(tmp_path: Path) -> None:
     tool = BashTool(str(tmp_path))
 

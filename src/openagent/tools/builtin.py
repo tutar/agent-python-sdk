@@ -20,6 +20,29 @@ from openagent.tools.models import PermissionDecision, ToolExecutionContext, Too
 from openagent.tools.skills import SkillInvocationBridge
 
 
+def _string_property(description: str, *, examples: list[str] | None = None) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "type": "string",
+        "description": description,
+    }
+    if examples:
+        payload["examples"] = examples
+    return payload
+
+
+def _object_schema(
+    properties: dict[str, dict[str, object]],
+    *,
+    required: list[str],
+) -> dict[str, object]:
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": required,
+        "additionalProperties": False,
+    }
+
+
 @dataclass(slots=True)
 class _BuiltinTool:
     name: str
@@ -74,7 +97,15 @@ class ReadTool(_BuiltinTool):
         super().__init__(
             name="Read",
             description_text="Read a single file from the local workspace.",
-            input_schema={"type": "object", "required": ["path"]},
+            input_schema=_object_schema(
+                {
+                    "path": _string_property(
+                        "Path to the file, relative to the current workspace root.",
+                        examples=["README.md", "src/openagent/tools/builtin.py"],
+                    )
+                },
+                required=["path"],
+            ),
             aliases=["read"],
             supports_result_persistence=True,
         )
@@ -105,7 +136,22 @@ class WriteTool(_BuiltinTool):
         super().__init__(
             name="Write",
             description_text="Create or overwrite a file in the local workspace.",
-            input_schema={"type": "object", "required": ["path", "content"]},
+            input_schema=_object_schema(
+                {
+                    "path": _string_property(
+                        (
+                            "Path to the file to create or overwrite, relative to the "
+                            "current workspace root."
+                        ),
+                        examples=["notes/todo.txt", "tmp/output.json"],
+                    ),
+                    "content": _string_property(
+                        "Full file contents to write.",
+                        examples=["hello world\n", "{\"ok\": true}\n"],
+                    ),
+                },
+                required=["path", "content"],
+            ),
             aliases=["write"],
         )
         self.root = root
@@ -129,7 +175,23 @@ class EditTool(_BuiltinTool):
         super().__init__(
             name="Edit",
             description_text="Apply a targeted replace edit to an existing file.",
-            input_schema={"type": "object", "required": ["path", "old", "new"]},
+            input_schema=_object_schema(
+                {
+                    "path": _string_property(
+                        "Path to the file to edit, relative to the current workspace root.",
+                        examples=["src/openagent/tools/builtin.py"],
+                    ),
+                    "old": _string_property(
+                        "Exact text to replace.",
+                        examples=["old_value = 1"],
+                    ),
+                    "new": _string_property(
+                        "Replacement text.",
+                        examples=["old_value = 2"],
+                    ),
+                },
+                required=["path", "old", "new"],
+            ),
             aliases=["edit"],
         )
         self.root = root
@@ -156,7 +218,15 @@ class GlobTool(_BuiltinTool):
         super().__init__(
             name="Glob",
             description_text="List files matching a glob pattern.",
-            input_schema={"type": "object", "required": ["pattern"]},
+            input_schema=_object_schema(
+                {
+                    "pattern": _string_property(
+                        "Glob pattern to match files relative to the workspace root.",
+                        examples=["*", "*.py", "src/**/*.py"],
+                    )
+                },
+                required=["pattern"],
+            ),
             aliases=["glob"],
             supports_result_persistence=True,
         )
@@ -192,7 +262,15 @@ class GrepTool(_BuiltinTool):
         super().__init__(
             name="Grep",
             description_text="Search file contents by substring.",
-            input_schema={"type": "object", "required": ["pattern"]},
+            input_schema=_object_schema(
+                {
+                    "pattern": _string_property(
+                        "Substring or simple pattern to search for inside workspace files.",
+                        examples=["TODO", "OpenAgent", "validation_failed"],
+                    )
+                },
+                required=["pattern"],
+            ),
             aliases=["grep"],
             supports_result_persistence=True,
         )
@@ -233,7 +311,15 @@ class BashTool(_BuiltinTool):
         super().__init__(
             name="Bash",
             description_text="Execute a local shell command.",
-            input_schema={"type": "object", "required": ["command"]},
+            input_schema=_object_schema(
+                {
+                    "command": _string_property(
+                        "Full shell command to execute in the current workspace root.",
+                        examples=["ls -la", "pwd", "pytest -q tests/test_tools_alignment.py"],
+                    )
+                },
+                required=["command"],
+            ),
             aliases=["bash"],
             max_result_size_chars=64_000,
             supports_result_persistence=True,
@@ -275,7 +361,15 @@ class WebFetchTool(_BuiltinTool):
         super().__init__(
             name="WebFetch",
             description_text="Fetch a concrete URL over HTTP(S).",
-            input_schema={"type": "object", "required": ["url"]},
+            input_schema=_object_schema(
+                {
+                    "url": _string_property(
+                        "Fully qualified HTTP or HTTPS URL to fetch.",
+                        examples=["https://example.com", "http://127.0.0.1:8001/health"],
+                    )
+                },
+                required=["url"],
+            ),
             aliases=["web_fetch"],
             supports_result_persistence=True,
         )
@@ -303,7 +397,15 @@ class WebSearchTool(_BuiltinTool):
         super().__init__(
             name="WebSearch",
             description_text="Search the web and return a result list.",
-            input_schema={"type": "object", "required": ["query"]},
+            input_schema=_object_schema(
+                {
+                    "query": _string_property(
+                        "Search query string to submit to the configured search backend.",
+                        examples=["qwen3.6", "OpenAgent bootstrap prompts"],
+                    )
+                },
+                required=["query"],
+            ),
             aliases=["web_search"],
         )
         self.backend = backend
@@ -348,7 +450,15 @@ class AgentTool(_BuiltinTool):
         super().__init__(
             name="Agent",
             description_text="Spawn or delegate work to a sub-agent.",
-            input_schema={"type": "object"},
+            input_schema=_object_schema(
+                {
+                    "task": _string_property(
+                        "Task description to delegate to the sub-agent.",
+                        examples=["Review the current diff for regressions"],
+                    )
+                },
+                required=[],
+            ),
             aliases=["agent"],
         )
         self.handler = handler
@@ -374,7 +484,25 @@ class SkillTool(_BuiltinTool):
         super().__init__(
             name="Skill",
             description_text="Invoke a discovered skill through the skill command surface.",
-            input_schema={"type": "object", "required": ["skill_id"]},
+            input_schema=_object_schema(
+                {
+                    "skill_id": _string_property(
+                        "Identifier of the skill to invoke.",
+                        examples=["openai-docs", "imagegen"],
+                    ),
+                    "args": {
+                        "type": "object",
+                        "description": "Arguments passed to the skill.",
+                        "additionalProperties": True,
+                    },
+                    "context": {
+                        "type": "object",
+                        "description": "Additional runtime context for the skill.",
+                        "additionalProperties": True,
+                    },
+                },
+                required=["skill_id"],
+            ),
             aliases=["skill"],
         )
         self.bridge = bridge
@@ -403,7 +531,19 @@ class AskUserQuestionTool(_BuiltinTool):
             description_text=(
                 "Ask the user a structured question and block until a reply is provided."
             ),
-            input_schema={"type": "object", "required": ["question"]},
+            input_schema=_object_schema(
+                {
+                    "question": _string_property(
+                        "Structured question to ask the user.",
+                        examples=["Which branch should I use?", "Approve this command?"],
+                    ),
+                    "request_id": _string_property(
+                        "Optional stable identifier for correlating the reply.",
+                        examples=["req_123"],
+                    ),
+                },
+                required=["question"],
+            ),
             aliases=["ask_user"],
         )
 

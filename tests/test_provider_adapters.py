@@ -16,7 +16,14 @@ from openagent.harness.providers import (
 from openagent.harness.providers.base import HttpResponse
 from openagent.object_model import JsonObject, ToolResult
 from openagent.session import InMemorySessionStore, InMemoryShortTermMemoryStore
-from openagent.tools import SimpleToolExecutor, StaticToolRegistry, ToolCall
+from openagent.tools import (
+    BashTool,
+    GlobTool,
+    SimpleToolExecutor,
+    StaticToolRegistry,
+    ToolCall,
+    WebSearchTool,
+)
 
 
 @dataclass(slots=True)
@@ -278,6 +285,58 @@ def test_provider_adapters_include_bootstrap_system_prompt() -> None:
     assert anthropic_transport.seen_payload["system"] == (
         "You are OpenAgent.\nWorkspace root: /tmp/workspace"
     )
+
+
+def test_openai_chat_adapter_emits_complete_builtin_tool_schema() -> None:
+    transport = FakeTransport(response_body={"choices": [{"message": {"content": "ok"}}]})
+    adapter = OpenAIChatCompletionsModelAdapter(
+        model="gpt-test",
+        base_url="http://127.0.0.1:8001",
+        transport=transport,
+    )
+
+    adapter.generate(
+        ModelTurnRequest(
+            session_id="sess_builtin_schema",
+            messages=[{"role": "user", "content": "list files"}],
+            tool_definitions=[
+                {
+                    "name": tool.name,
+                    "description": tool.description(),
+                    "input_schema": tool.input_schema,
+                }
+                for tool in (GlobTool("."), BashTool("."), WebSearchTool())
+            ],
+        )
+    )
+
+    assert transport.seen_payload is not None
+    tools_payload = transport.seen_payload["tools"]
+    assert isinstance(tools_payload, list)
+
+    by_name = {
+        item["function"]["name"]: item["function"]
+        for item in tools_payload
+        if isinstance(item, dict) and isinstance(item.get("function"), dict)
+    }
+    glob_parameters = by_name["Glob"]["parameters"]
+    bash_parameters = by_name["Bash"]["parameters"]
+    search_parameters = by_name["WebSearch"]["parameters"]
+
+    assert glob_parameters["properties"]["pattern"]["description"]
+    assert glob_parameters["properties"]["pattern"]["examples"] == ["*", "*.py", "src/**/*.py"]
+    assert glob_parameters["additionalProperties"] is False
+    assert bash_parameters["properties"]["command"]["description"]
+    assert bash_parameters["properties"]["command"]["examples"] == [
+        "ls -la",
+        "pwd",
+        "pytest -q tests/test_tools_alignment.py",
+    ]
+    assert search_parameters["properties"]["query"]["description"]
+    assert search_parameters["properties"]["query"]["examples"] == [
+        "qwen3.6",
+        "OpenAgent bootstrap prompts",
+    ]
 
 
 def test_openai_adapter_generate_with_exchange_exposes_payload_and_raw_response() -> None:
