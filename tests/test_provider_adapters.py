@@ -245,6 +245,41 @@ def test_provider_adapters_include_short_term_memory_summary() -> None:
     )
 
 
+def test_provider_adapters_include_bootstrap_system_prompt() -> None:
+    openai_transport = FakeTransport(response_body={"choices": [{"message": {"content": "ok"}}]})
+    openai_adapter = OpenAIChatCompletionsModelAdapter(
+        model="gpt-test",
+        base_url="http://127.0.0.1:8001",
+        transport=openai_transport,
+    )
+    anthropic_transport = FakeTransport(response_body={"content": [{"type": "text", "text": "ok"}]})
+    anthropic_adapter = AnthropicMessagesModelAdapter(
+        model="claude-test",
+        base_url="http://127.0.0.1:8001",
+        transport=anthropic_transport,
+    )
+    request = ModelTurnRequest(
+        session_id="sess_bootstrap",
+        messages=[{"role": "user", "content": "list files"}],
+        system_prompt="You are OpenAgent.\nWorkspace root: /tmp/workspace",
+    )
+
+    openai_adapter.generate(request)
+    anthropic_adapter.generate(request)
+
+    assert openai_transport.seen_payload is not None
+    openai_messages = openai_transport.seen_payload["messages"]
+    assert isinstance(openai_messages, list)
+    assert openai_messages[0] == {
+        "role": "system",
+        "content": "You are OpenAgent.\nWorkspace root: /tmp/workspace",
+    }
+    assert anthropic_transport.seen_payload is not None
+    assert anthropic_transport.seen_payload["system"] == (
+        "You are OpenAgent.\nWorkspace root: /tmp/workspace"
+    )
+
+
 def test_openai_adapter_generate_with_exchange_exposes_payload_and_raw_response() -> None:
     transport = FakeTransport(
         response_body={
@@ -329,6 +364,41 @@ def test_harness_build_model_input_includes_tool_definitions() -> None:
             },
         }
     ]
+
+
+def test_harness_build_model_input_includes_bootstrap_prompt_sections(tmp_path: Path) -> None:
+    tool = EchoTool()
+    harness = SimpleHarness(
+        model=ToolThenReplyModel(responses=[ModelTurnResponse(assistant_message="ok")]),
+        sessions=InMemorySessionStore(),
+        tools=StaticToolRegistry([tool]),
+        executor=SimpleToolExecutor(StaticToolRegistry([tool])),
+    )
+    session = harness.sessions.load_session("sess_bootstrap")
+    session.metadata["workdir"] = str(tmp_path)
+    session.messages.append(harness._new_session_message(role="user", content="show files"))
+
+    request = harness.build_model_input(session, [])
+
+    assert request.system_prompt is not None
+    assert "OpenAgent" in request.system_prompt
+    assert f"Workspace root: {tmp_path.resolve()}" in request.system_prompt
+    section_names = [section["name"] for section in request.prompt_sections]
+    assert section_names == [
+        "default_behavior",
+        "agent_identity",
+        "operating_mode",
+        "workspace_context",
+        "tool_usage_contract",
+        "environment_summary",
+    ]
+    assert request.prompt_blocks is not None
+    assert request.initial_user_bootstrap == {
+        "content": "",
+        "first_turn_only": True,
+        "transcript_visibility": "hidden",
+        "dedup_policy": "once",
+    }
 
 
 def test_harness_build_model_input_includes_short_term_memory() -> None:

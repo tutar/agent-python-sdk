@@ -91,11 +91,19 @@ class OpenAIChatCompletionsModelAdapter:
 
     def _messages_payload(self, request: ModelTurnRequest) -> list[JsonObject]:
         messages = [self._message_payload(message) for message in request.messages]
+        if request.system_prompt:
+            messages.insert(
+                0,
+                {
+                    "role": "system",
+                    "content": request.system_prompt,
+                },
+            )
         if isinstance(request.short_term_memory, dict):
             summary = str(request.short_term_memory.get("summary", "")).strip()
             if summary:
                 messages.insert(
-                    0,
+                    1 if request.system_prompt else 0,
                     {
                         "role": "system",
                         "content": f"Session continuity summary: {summary}",
@@ -105,7 +113,7 @@ class OpenAIChatCompletionsModelAdapter:
             memory_summary = str(memory.get("summary", memory.get("content", "")))
             if memory_summary:
                 messages.insert(
-                    0,
+                    1 if request.system_prompt else 0,
                     {
                         "role": "system",
                         "content": f"Relevant memory: {memory_summary}",

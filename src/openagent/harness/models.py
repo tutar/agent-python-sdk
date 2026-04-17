@@ -20,6 +20,10 @@ from openagent.tools import ToolCall
 class ModelTurnRequest(SerializableModel):
     session_id: str
     messages: list[JsonObject]
+    system_prompt: str | None = None
+    prompt_sections: list[JsonObject] = field(default_factory=list)
+    prompt_blocks: JsonObject | None = None
+    initial_user_bootstrap: JsonObject | None = None
     available_tools: list[str] = field(default_factory=list)
     tool_definitions: list[JsonObject] = field(default_factory=list)
     short_term_memory: JsonObject | None = None

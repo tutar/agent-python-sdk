@@ -65,6 +65,8 @@ class AnthropicMessagesModelAdapter:
     def _payload(self, request: ModelTurnRequest) -> JsonObject:
         system_messages: list[str] = []
         messages: list[JsonObject] = []
+        if request.system_prompt:
+            system_messages.append(request.system_prompt)
         if isinstance(request.short_term_memory, dict):
             summary = str(request.short_term_memory.get("summary", "")).strip()
             if summary:

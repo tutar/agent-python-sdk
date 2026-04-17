@@ -191,6 +191,12 @@ class FeishuChannelAdapter:
             return f"Tool {tool_name} was cancelled."
         if event_type == "turn_failed":
             self._clear_session_progress(session_id)
+            summary = payload.get("summary")
+            if summary:
+                return (
+                    f"Turn failed: {summary}\n"
+                    "Please retry with a clearer request or refine the tool intent."
+                )
             reason = payload.get("reason") or payload.get("message") or payload
             return f"Turn failed: {reason}"
         if event_type == "turn_completed":

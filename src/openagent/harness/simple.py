@@ -15,6 +15,11 @@ from openagent.context_governance import (
     ContextGovernance,
     ContextReport,
 )
+from openagent.harness.bootstrap import (
+    BootstrapPromptAssembler,
+    InitialUserBootstrap,
+    default_workspace_root_from_metadata,
+)
 from openagent.harness.model_io import ModelIoCapture, NoOpModelIoCapture
 from openagent.harness.models import (
     AgentRuntime,
@@ -85,6 +90,7 @@ class SimpleHarness:
     last_memory_consolidation_job_id: str | None = None
     observability: AgentObservability | None = None
     model_io_capture: ModelIoCapture = field(default_factory=NoOpModelIoCapture)
+    bootstrap_prompts: BootstrapPromptAssembler = field(default_factory=BootstrapPromptAssembler)
     runtime_loop: AgentRuntime = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -191,9 +197,31 @@ class SimpleHarness:
             for tool in self.tools.list_tools()
         ]
         short_term_memory = self._load_short_term_memory(session_slice)
+        prompt_sections = self.bootstrap_prompts.resolve_sections(
+            self.bootstrap_prompts.merge_prompt_layers(
+                self.bootstrap_prompts.build_default_prompt(
+                    runtime_capabilities=available_tools,
+                    model_view={
+                        "workspace_root": default_workspace_root_from_metadata(
+                            session_slice.metadata
+                        ),
+                        "session_id": session_slice.session_id,
+                    },
+                )
+            )
+        )
+        prompt_blocks = self.bootstrap_prompts.split_static_dynamic(prompt_sections)
+        system_prompt = "\n\n".join(
+            [*prompt_blocks.static_blocks, *prompt_blocks.dynamic_blocks]
+        ).strip() or None
+        initial_user_bootstrap = InitialUserBootstrap()
         return ModelTurnRequest(
             session_id=session_slice.session_id,
             messages=messages,
+            system_prompt=system_prompt,
+            prompt_sections=[section.to_dict() for section in prompt_sections.sections],
+            prompt_blocks=prompt_blocks.to_dict(),
+            initial_user_bootstrap=initial_user_bootstrap.to_dict(),
             available_tools=available_tools,
             tool_definitions=tool_definitions,
             short_term_memory=(

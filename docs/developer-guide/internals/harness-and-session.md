@@ -73,6 +73,15 @@ loop 语义。
 
 这意味着治理结果是可观测的，而不是只体现在 message 数量变化上。
 
+当前 `build_model_input(...)` 还会额外组装独立的 bootstrap prompt：
+
+- `OpenAgent` identity / role
+- local-first operating mode
+- workspace root
+- tool usage contract
+
+这层 prompt 和 transcript、short-term memory、memory recall 分开建模，不再由 provider adapter 临时拼接。
+
 当前 `last_context_report` 还会显式暴露：
 
 - `continuation_message_budget`
@@ -153,6 +162,8 @@ durable memory 不保存在 `SessionRecord` 里。
 
 `build_model_input(...)` 会优先读取稳定短期记忆，并写入 `ModelTurnRequest.short_term_memory`。
 provider adapter 再把这份摘要映射成 provider-specific system context。
+
+bootstrap/system prompt 也会单独写入 `ModelTurnRequest.system_prompt`，和短期记忆摘要不是同一层。
 
 同一 session 还带有 single active harness lease 语义：
 

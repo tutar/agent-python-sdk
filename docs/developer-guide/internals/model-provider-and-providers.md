@@ -43,6 +43,7 @@ provider adapter 不负责：
 - session 恢复
 - context compact
 - gateway projection
+- bootstrap prompt 内容定义
 
 这些仍然在 harness、session、tools 和 gateway 层。
 
@@ -54,5 +55,11 @@ provider adapter 不负责：
 - `AnthropicMessagesModelAdapter`
 - `load_model_from_env`
 - `UrllibHttpTransport`
+- harness-owned bootstrap/system prompt projection
 
 openagent host 在检测到 `OPENAGENT_MODEL` 时，会优先通过 `load_model_from_env()` 装配真实 provider。
+
+当前 bootstrap/system prompt 由 harness 统一组装，再投影给 provider：
+
+- OpenAI-compatible：作为 `messages` 中的 `role=system`
+- Anthropic-compatible：作为顶层 `system`

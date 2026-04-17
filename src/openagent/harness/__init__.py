@@ -1,5 +1,12 @@
 """Harness module exports."""
 
+from openagent.harness.bootstrap import (
+    BootstrapPromptAssembler,
+    InitialUserBootstrap,
+    PromptBlocks,
+    PromptSection,
+    ResolvedPromptSections,
+)
 from openagent.harness.interfaces import Harness
 from openagent.harness.model_io import (
     FileModelIoCapture,
@@ -41,9 +48,11 @@ from openagent.harness.simple import SimpleHarness
 __all__ = [
     "AgentRuntime",
     "AnthropicMessagesModelAdapter",
+    "BootstrapPromptAssembler",
     "CancelledTurn",
     "FileModelIoCapture",
     "Harness",
+    "InitialUserBootstrap",
     "HttpResponse",
     "HttpTransport",
     "ModelAdapter",
@@ -57,9 +66,12 @@ __all__ = [
     "ModelTurnRequest",
     "ModelTurnResponse",
     "OpenAIChatCompletionsModelAdapter",
+    "PromptBlocks",
+    "PromptSection",
     "ProviderConfigurationError",
     "ProviderError",
     "RalphLoop",
+    "ResolvedPromptSections",
     "RetryExhaustedTurn",
     "SimpleHarness",
     "StreamingModelAdapter",

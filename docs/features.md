@@ -107,6 +107,12 @@
 - prompt-cache fork-sharing baseline
 - prompt-cache strategy-equivalence baseline
 - harness-level `last_context_report`
+- harness-owned bootstrap prompt baseline
+  - OpenAgent identity / role
+  - local-first operating mode
+  - workspace root projection
+  - tool usage contract
+  - static / dynamic section split baseline
 
 当前不支持：
 

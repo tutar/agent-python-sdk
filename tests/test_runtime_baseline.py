@@ -13,6 +13,7 @@ from openagent.harness import (
 from openagent.object_model import JsonObject, RuntimeEventType, TerminalStatus, ToolResult
 from openagent.session import InMemorySessionStore
 from openagent.tools import (
+    BashTool,
     PermissionDecision,
     SimpleToolExecutor,
     StaticToolRegistry,
@@ -137,6 +138,33 @@ def test_simple_harness_tool_roundtrip() -> None:
         RuntimeEventType.TURN_COMPLETED,
     ]
     assert echo.seen_arguments == [{"text": "payload"}]
+
+
+def test_simple_harness_skips_empty_assistant_event_before_tool_failure() -> None:
+    session_store = InMemorySessionStore()
+    tools = StaticToolRegistry([BashTool(".")])
+    executor = SimpleToolExecutor(tools)
+    model = ScriptedModel(
+        responses=[
+            ModelTurnResponse(
+                assistant_message="",
+                tool_calls=[ToolCall(tool_name="Bash", arguments={})],
+            )
+        ]
+    )
+    harness = SimpleHarness(model=model, sessions=session_store, tools=tools, executor=executor)
+
+    events, terminal = harness.run_turn("list files", "sess_tool_fail")
+
+    assert terminal.status is TerminalStatus.FAILED
+    assert terminal.reason == "tool_execution_failed"
+    assert [event.event_type for event in events] == [
+        RuntimeEventType.TURN_STARTED,
+        RuntimeEventType.TURN_FAILED,
+    ]
+    assert [message.role for message in session_store.load_session("sess_tool_fail").messages] == [
+        "user"
+    ]
 
 
 def test_simple_harness_streaming_model_emits_deltas() -> None:

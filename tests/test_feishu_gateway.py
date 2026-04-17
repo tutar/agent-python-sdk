@@ -268,6 +268,34 @@ def test_feishu_adapter_projects_tool_failure_reason() -> None:
     }
 
 
+def test_feishu_adapter_projects_turn_failure_summary_with_retry_hint() -> None:
+    adapter = FeishuChannelAdapter()
+
+    projected = adapter.project_outbound(
+        EgressEnvelope(
+            channel="feishu",
+            conversation_id="feishu:chat:oc_chat_1",
+            event={
+                "event_type": "turn_failed",
+                "payload": {
+                    "reason": "tool_execution_failed",
+                    "summary": "Bash: validation_failed: missing required field command",
+                },
+            },
+            session_id="sess_1",
+        )
+    )
+
+    assert projected == {
+        "chat_id": "oc_chat_1",
+        "thread_id": None,
+        "text": (
+            "Turn failed: Bash: validation_failed: missing required field command\n"
+            "Please retry with a clearer request or refine the tool intent."
+        ),
+    }
+
+
 def test_feishu_host_lazy_binds_and_replies(tmp_path: Path) -> None:
     client = FakeFeishuClient()
     config = FeishuAppConfig(
