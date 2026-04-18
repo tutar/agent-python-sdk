@@ -9,8 +9,8 @@ from typing import Protocol
 
 from openagent.object_model import JsonObject
 
-from ..models import ChannelIdentity, EgressEnvelope, InboundEnvelope
-from .local import _default_local_event_types
+from ...models import ChannelIdentity, EgressEnvelope, InboundEnvelope
+from ..local import _default_local_event_types
 
 
 class FeishuBotClient(Protocol):
@@ -149,12 +149,7 @@ class FeishuChannelAdapter:
             return chat_id, None
         raise ValueError(f"Invalid Feishu conversation id: {conversation_id}")
 
-    def _event_text(
-        self,
-        event_type: str,
-        payload: JsonObject,
-        session_id: str,
-    ) -> str | None:
+    def _event_text(self, event_type: str, payload: JsonObject, session_id: str) -> str | None:
         if event_type == "assistant_message":
             message = payload.get("message")
             if message is None:

@@ -15,8 +15,7 @@ authors = [
 dependencies = []
 
 [project.scripts]
-openagent-host = "openagent.cli.host:main"
-openagent-feishu = "openagent.cli.feishu:main"
+openagent-host = "openagent.cli:main"
 
 [project.optional-dependencies]
 dev = [

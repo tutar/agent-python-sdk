@@ -1,12 +1,10 @@
-"""Feishu host driver and official client integration."""
+"""Feishu host driver and host-side coordination."""
 
 from __future__ import annotations
 
 import fcntl
-import importlib
 import json
 import os
-import traceback
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -15,10 +13,10 @@ from typing import Any, cast
 
 from openagent.object_model import JsonObject
 
-from ..channels.feishu import FeishuBotClient, FeishuChannelAdapter
-from ..core import Gateway
-from ..models import ChannelIdentity, EgressEnvelope
-from .feishu_dedupe import FileFeishuInboundDedupeStore, InMemoryFeishuInboundDedupeStore
+from ...core import Gateway
+from ...models import ChannelIdentity, EgressEnvelope
+from .adapter import FeishuBotClient, FeishuChannelAdapter
+from .dedupe import FileFeishuInboundDedupeStore, InMemoryFeishuInboundDedupeStore
 
 FEISHU_REACTION_IN_PROGRESS = "OneSecond"
 FEISHU_REACTION_COMPLETED = "DONE"
@@ -54,9 +52,10 @@ class FeishuHostRunLock:
 
         if self._handle is None:
             return
+        handle = self._handle
         with suppress(OSError):
-            fcntl.flock(self._handle.fileno(), fcntl.LOCK_UN)
-        self._handle.close()
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.close()
         self._handle = None
 
 
@@ -70,11 +69,7 @@ class FeishuLongConnectionHost:
     run_lock: FeishuHostRunLock | None = None
     management_handler: Callable[[str], list[JsonObject]] | None = None
     dedupe_store: InMemoryFeishuInboundDedupeStore | FileFeishuInboundDedupeStore | None = None
-    _in_progress_reactions: dict[str, str | None] = field(
-        default_factory=dict,
-        init=False,
-        repr=False,
-    )
+    _in_progress_reactions: dict[str, str | None] = field(default_factory=dict, init=False)
 
     def run(self) -> None:
         """Start the underlying Feishu long-connection client."""
@@ -82,6 +77,7 @@ class FeishuLongConnectionHost:
         if self.run_lock is not None:
             self.run_lock.acquire()
         print("feishu-host> starting long connection", flush=True)
+
         def _dispatch(raw_event: JsonObject) -> None:
             self.handle_event(raw_event)
 
@@ -106,15 +102,9 @@ class FeishuLongConnectionHost:
         )
         message_id = self._extract_message_id(raw_event)
         if message_id is None:
-            print(
-                "feishu-host> inbound event missing message_id; dedupe skipped",
-                flush=True,
-            )
+            print("feishu-host> inbound event missing message_id; dedupe skipped", flush=True)
         elif self.dedupe_store is not None and self.dedupe_store.check_and_mark(message_id):
-            print(
-                f"feishu-host> skipped duplicate inbound message_id={message_id}",
-                flush=True,
-            )
+            print(f"feishu-host> skipped duplicate inbound message_id={message_id}", flush=True)
             return []
         inbound = self.adapter.normalize_inbound(raw_event)
         if inbound is None:
@@ -176,11 +166,7 @@ class FeishuLongConnectionHost:
             pass
 
         session_id = f"feishu-session:{conversation_id}"
-        self.gateway.bind_session(
-            channel_identity,
-            session_id,
-            adapter_name="feishu",
-        )
+        self.gateway.bind_session(channel_identity, session_id, adapter_name="feishu")
 
     def _dispatch_egress(self, egress_events: list[EgressEnvelope]) -> list[JsonObject]:
         outbound_messages: list[JsonObject] = []
@@ -231,11 +217,7 @@ class FeishuLongConnectionHost:
             text = str(response.get("message", "")).strip()
             if not text:
                 continue
-            projected: JsonObject = {
-                "chat_id": chat_id,
-                "thread_id": thread_id,
-                "text": text,
-            }
+            projected: JsonObject = {"chat_id": chat_id, "thread_id": thread_id, "text": text}
             print(
                 "feishu-host> sending management outbound"
                 f" chat={chat_id} text={text}",
@@ -278,152 +260,3 @@ class FeishuLongConnectionHost:
                 f"feishu-host> failed to add completed reaction message_id={message_id}: {exc}",
                 flush=True,
             )
-
-
-class OfficialFeishuBotClient:
-    """Runtime wrapper over the official Feishu Python SDK."""
-
-    def __init__(self, app_id: str, app_secret: str) -> None:
-        try:
-            self._lark = importlib.import_module("lark_oapi")
-            im_v1 = importlib.import_module("lark_oapi.api.im.v1")
-        except ImportError as exc:
-            raise RuntimeError(
-                "Feishu support requires the optional dependency 'lark-oapi'. "
-                "Install it with: pip install 'openagent[feishu]'"
-            ) from exc
-
-        self._create_message_request = getattr(im_v1, "CreateMessageRequest")
-        self._create_message_request_body = getattr(im_v1, "CreateMessageRequestBody")
-        self._create_message_reaction_request = getattr(im_v1, "CreateMessageReactionRequest")
-        self._create_message_reaction_request_body = getattr(
-            im_v1, "CreateMessageReactionRequestBody"
-        )
-        self._emoji = getattr(im_v1, "Emoji")
-        self._delete_message_reaction_request = getattr(im_v1, "DeleteMessageReactionRequest")
-        self._app_id = app_id
-        self._app_secret = app_secret
-        self._client = (
-            self._lark.Client.builder()
-            .app_id(app_id)
-            .app_secret(app_secret)
-            .log_level(self._lark.LogLevel.INFO)
-            .build()
-        )
-        self._ws_client: Any | None = None
-
-    def start(self, event_handler: Callable[[JsonObject], None]) -> None:
-        """Open the Feishu long connection and dispatch incoming events."""
-
-        def _safe_dispatch(data: Any) -> None:
-            try:
-                event_handler(self._marshal_event(data))
-            except Exception as exc:  # pragma: no cover
-                print(f"feishu-host> event handler failed: {exc}", flush=True)
-                print(traceback.format_exc(), flush=True)
-
-        dispatcher = (
-            self._lark.EventDispatcherHandler.builder("", "")
-            .register_p2_im_message_receive_v1(_safe_dispatch)
-            .build()
-        )
-        self._ws_client = self._lark.ws.Client(
-            app_id=self._app_id,
-            app_secret=self._app_secret,
-            event_handler=dispatcher,
-            log_level=self._lark.LogLevel.INFO,
-        )
-        self._ws_client.start()
-
-    def close(self) -> None:
-        """Close the websocket client when possible."""
-
-        if self._ws_client is not None and hasattr(self._ws_client, "close"):
-            self._ws_client.close()
-
-    def send_text(self, chat_id: str, text: str, thread_id: str | None = None) -> None:
-        """Send a text message to the target chat."""
-
-        print(
-            "feishu-host> agent send_text"
-            f" chat={chat_id} thread={thread_id} text={text}",
-            flush=True,
-        )
-        body_builder = (
-            self._create_message_request_body.builder()
-            .receive_id(chat_id)
-            .msg_type("text")
-            .content(json.dumps({"text": text}, ensure_ascii=False))
-        )
-        if thread_id is not None:
-            if hasattr(body_builder, "root_id"):
-                body_builder = body_builder.root_id(thread_id)
-            if hasattr(body_builder, "reply_in_thread"):
-                body_builder = body_builder.reply_in_thread(True)
-
-        request = (
-            self._create_message_request.builder()
-            .receive_id_type("chat_id")
-            .request_body(body_builder.build())
-            .build()
-        )
-        response = self._client.im.v1.message.create(request)
-        if not response.success():
-            raise RuntimeError(f"Feishu send_text failed: code={response.code} msg={response.msg}")
-
-    def add_reaction(self, message_id: str, reaction_type: str) -> str | None:
-        """Add a reaction to a Feishu message."""
-
-        print(
-            "feishu-host> agent add_reaction"
-            f" message_id={message_id} reaction={reaction_type}",
-            flush=True,
-        )
-        emoji = self._emoji.builder().emoji_type(reaction_type).build()
-        body = (
-            self._create_message_reaction_request_body.builder()
-            .reaction_type(emoji)
-            .build()
-        )
-        request = (
-            self._create_message_reaction_request.builder()
-            .message_id(message_id)
-            .request_body(body)
-            .build()
-        )
-        response = self._client.im.v1.message_reaction.create(request)
-        if not response.success():
-            raise RuntimeError(
-                f"Feishu add_reaction failed: code={response.code} msg={response.msg}"
-            )
-        data = getattr(response, "data", None)
-        return str(getattr(data, "reaction_id", "")).strip() or None
-
-    def remove_reaction(self, message_id: str, reaction_id: str) -> None:
-        """Remove a reaction from a Feishu message."""
-
-        print(
-            "feishu-host> agent remove_reaction"
-            f" message_id={message_id} reaction_id={reaction_id}",
-            flush=True,
-        )
-        request = (
-            self._delete_message_reaction_request.builder()
-            .message_id(message_id)
-            .reaction_id(reaction_id)
-            .build()
-        )
-        response = self._client.im.v1.message_reaction.delete(request)
-        if not response.success():
-            raise RuntimeError(
-                f"Feishu remove_reaction failed: code={response.code} msg={response.msg}"
-            )
-
-    def _marshal_event(self, data: Any) -> JsonObject:
-        raw = self._lark.JSON.marshal(data)
-        parsed = json.loads(raw) if isinstance(raw, str) else raw
-        if not isinstance(parsed, dict):
-            raise RuntimeError("Unexpected Feishu event payload")
-        if "header" not in parsed:
-            parsed["header"] = {"event_type": "im.message.receive_v1"}
-        return parsed

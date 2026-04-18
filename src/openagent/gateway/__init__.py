@@ -8,23 +8,18 @@ from .assemblies.feishu import (
     create_feishu_runtime,
 )
 from .binding_store import FileSessionBindingStore
-from .channels import (
-    FeishuBotClient,
-    FeishuChannelAdapter,
-    TerminalChannelAdapter,
-)
-from .core import Gateway
-from .hosts.feishu import (
+from .channels import FeishuChannelAdapter, TerminalChannelAdapter
+from .channels.feishu import (
     FEISHU_REACTION_COMPLETED,
     FEISHU_REACTION_IN_PROGRESS,
+    FeishuBotClient,
     FeishuHostRunLock,
     FeishuLongConnectionHost,
-    OfficialFeishuBotClient,
-)
-from .hosts.feishu_dedupe import (
     FileFeishuInboundDedupeStore,
     InMemoryFeishuInboundDedupeStore,
+    OfficialFeishuBotClient,
 )
+from .core import Gateway
 from .interfaces import ChannelAdapter, SessionAdapter, SessionBindingStore
 from .models import (
     ChannelIdentity,

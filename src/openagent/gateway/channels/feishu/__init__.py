@@ -1,18 +1,21 @@
-"""Host-side gateway integrations."""
+"""Feishu channel integration surface."""
 
-from .feishu import (
+from .adapter import FeishuBotClient, FeishuChannelAdapter
+from .client import OfficialFeishuBotClient
+from .dedupe import FileFeishuInboundDedupeStore, InMemoryFeishuInboundDedupeStore
+from .host import (
     FEISHU_REACTION_COMPLETED,
     FEISHU_REACTION_IN_PROGRESS,
     FeishuHostRunLock,
     FeishuLongConnectionHost,
-    OfficialFeishuBotClient,
 )
-from .feishu_dedupe import FileFeishuInboundDedupeStore, InMemoryFeishuInboundDedupeStore
 
 __all__ = [
     "FileFeishuInboundDedupeStore",
     "FEISHU_REACTION_COMPLETED",
     "FEISHU_REACTION_IN_PROGRESS",
+    "FeishuBotClient",
+    "FeishuChannelAdapter",
     "FeishuHostRunLock",
     "FeishuLongConnectionHost",
     "InMemoryFeishuInboundDedupeStore",

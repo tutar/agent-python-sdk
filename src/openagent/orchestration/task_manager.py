@@ -11,6 +11,7 @@ from enum import StrEnum
 from pathlib import Path
 from threading import Lock
 from time import perf_counter
+from typing import cast
 
 from openagent.object_model import (
     JsonObject,
@@ -361,7 +362,10 @@ class FileTaskManager:
         )
 
     def _read_json(self, path: Path) -> JsonObject:
-        return json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError(f"Expected JSON object in {path}")
+        return cast(JsonObject, payload)
 
 
 class LocalBackgroundAgentOrchestrator:

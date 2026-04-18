@@ -134,7 +134,7 @@ function App() {
 
 		socket.on('error', error => {
 			pushLine(
-				`system> host unavailable: start python -m openagent.cli.host (terminal=${terminalHost}:${String(terminalPort)})`,
+				`system> host unavailable: start openagent-host (terminal=${terminalHost}:${String(terminalPort)})`,
 			);
 			pushLine(`system> connection error: ${error.message}`);
 		});

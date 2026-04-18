@@ -88,7 +88,8 @@ loop 语义。
 - `recommended_max_output_tokens`
 - `provider_cache_key`
 
-`ContextGovernance` 现在还支持结构化 prompt-cache snapshot 和 break detection：
+`ContextGovernance` 现在位于 `harness/context/`，并继续支持结构化 prompt-cache
+snapshot 和 break detection：
 
 - stable prefix snapshot
 - dynamic suffix snapshot

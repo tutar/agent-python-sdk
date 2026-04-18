@@ -14,11 +14,13 @@ It focuses on a unified Python host, multi-channel interaction, builtin tools, d
 
 ## Quick Start
 
+Run these commands from the repository root.
+
 Start the host:
 
 ```bash
 export OPENAGENT_WORKSPACE_ROOT=$PWD
-python -m openagent.cli.host
+uv run openagent-host
 ```
 
 Then start the terminal TUI:

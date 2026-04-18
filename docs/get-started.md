@@ -11,6 +11,8 @@
 
 先启动 `openagent host`，再让 TUI 或 Feishu 接入它。
 
+下面所有命令都以项目根目录为当前工作目录执行。源码 checkout 下推荐统一使用 `uv run openagent-host`。
+
 ## Requirements
 
 - Python `3.11.15` 或兼容的 `3.11`
@@ -41,7 +43,7 @@ mypy .
 
 ```bash
 export OPENAGENT_WORKSPACE_ROOT=$PWD
-python -m openagent.cli.host
+uv run openagent-host
 ```
 
 或者使用安装后的命令：
@@ -104,7 +106,7 @@ export OPENAGENT_PROVIDER=openai
 export OPENAGENT_BASE_URL=http://127.0.0.1:8001
 export OPENAGENT_MODEL=gpt-4.1
 export OPENAGENT_WORKSPACE_ROOT=$PWD
-python -m openagent.cli.host
+uv run openagent-host
 ```
 
 Anthropic-compatible:
@@ -114,7 +116,7 @@ export OPENAGENT_PROVIDER=anthropic
 export OPENAGENT_BASE_URL=http://127.0.0.1:8001
 export OPENAGENT_MODEL=claude-sonnet-4-5
 export OPENAGENT_WORKSPACE_ROOT=$PWD
-python -m openagent.cli.host
+uv run openagent-host
 ```
 
 如果代理需要鉴权，也可以额外设置：
@@ -176,13 +178,13 @@ export OPENAGENT_PROVIDER=openai
 export OPENAGENT_BASE_URL=http://127.0.0.1:8001
 export OPENAGENT_MODEL=gpt-4.1
 export OPENAGENT_WORKSPACE_ROOT=$PWD
-python -m openagent.cli.host --channel feishu
+uv run openagent-host --channel feishu
 ```
 
-兼容入口仍然保留：
+安装后的脚本形态是：
 
 ```bash
-openagent-feishu
+openagent-host --channel feishu
 ```
 
 这两种方式的语义是一样的：

@@ -2,6 +2,12 @@
 
 这份文档描述当前 `openagent` 的本地架构边界和主流程。
 
+如果你在看 `src/openagent` 的目录调整，先配合阅读：
+
+- [`internals/module-map.md`](./internals/module-map.md)
+
+那份文档把 `agent-spec` 的模块拆分逻辑翻译成了当前 `openagent` 的实现参考，用来指导后续目录重构。
+
 ## Design Constraints
 
 当前实现遵循这些约束：
@@ -20,6 +26,10 @@
 - 可测试
 
 ## Module Layout
+
+更细的 `agent-spec -> openagent` 对照见：
+
+- [`internals/module-map.md`](./internals/module-map.md)
 
 核心模块：
 
@@ -191,6 +201,9 @@ turn 级控制当前通过 `TurnControl` 暴露：
 ## Context Governance
 
 当前 `ContextGovernance` 已经不是单纯的 compact helper。
+
+它的实现现在位于 `harness/context/`，按 `agent-spec` 的 `context-assembly` 语义组织；
+顶层 `context_governance.py` 只保留兼容导出。
 
 它在架构上负责：
 

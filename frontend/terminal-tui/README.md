@@ -15,7 +15,7 @@
 ```bash
 cd <project-root>
 export OPENAGENT_WORKSPACE_ROOT=$PWD
-python -m openagent.cli.host
+uv run openagent-host
 ```
 
 再启动 TUI：
@@ -51,7 +51,7 @@ export OPENAGENT_PROVIDER=openai
 export OPENAGENT_BASE_URL=http://127.0.0.1:8001
 export OPENAGENT_MODEL=gpt-4.1
 export OPENAGENT_WORKSPACE_ROOT=$PWD
-python -m openagent.cli.host
+uv run openagent-host
 ```
 
 或者：
@@ -61,7 +61,7 @@ export OPENAGENT_PROVIDER=anthropic
 export OPENAGENT_BASE_URL=http://127.0.0.1:8001
 export OPENAGENT_MODEL=claude-sonnet-4-5
 export OPENAGENT_WORKSPACE_ROOT=$PWD
-python -m openagent.cli.host
+uv run openagent-host
 ```
 
 如果没配置模型，host 会自动回退到 demo model。

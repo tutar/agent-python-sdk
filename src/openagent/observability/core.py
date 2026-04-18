@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from typing import cast
 
 from openagent.object_model import JsonObject
 from openagent.observability.interfaces import ObservabilitySink
@@ -98,8 +99,9 @@ class AgentObservability:
         return span
 
     def project_external_event(self, event: object) -> ExternalObservabilityEvent:
+        payload: JsonObject
         if hasattr(event, "to_dict"):
-            payload = event.to_dict()  # type: ignore[assignment]
+            payload = cast(JsonObject, event.to_dict())
         elif isinstance(event, dict):
             payload = dict(event)
         else:

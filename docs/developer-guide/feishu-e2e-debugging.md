@@ -41,7 +41,7 @@
 本地需要满足这些前置条件：
 
 - 已激活当前项目的 Python 开发环境
-- 能正常启动 `openagent-feishu`
+- 能正常启动 `openagent-host --channel feishu`
 - 已配置可用的模型 provider
 - 已拥有可接收机器人私聊的飞书账号
 - 已安装 Node.js 和 `npm`
@@ -82,7 +82,7 @@ lark-cli config init
 
 在当前项目根目录启动 Python 侧 host。有两种推荐方式。
 
-方式一：启动时预加载 Feishu：
+推荐方式：启动统一 host 并预加载 Feishu：
 
 ```bash
 export OPENAGENT_FEISHU_APP_ID=cli_xxx
@@ -90,20 +90,22 @@ export OPENAGENT_FEISHU_APP_SECRET=xxx
 export OPENAGENT_PROVIDER=openai
 export OPENAGENT_BASE_URL=http://127.0.0.1:8001
 export OPENAGENT_MODEL=gpt-4.1
-openagent-feishu
+uv run openagent-host --channel feishu
 ```
 
-如果你当前是源码环境，也可以用：
+安装后的脚本形态是：
 
 ```bash
-python -m openagent.cli.feishu
+openagent-host --channel feishu
 ```
 
-方式二：先启动统一 host，再在任意已接入 channel 中运行：
+也可以先启动统一 host：
 
 ```bash
-python -m openagent.cli.host
+uv run openagent-host
 ```
+
+然后在任意已接入 channel 中运行：
 
 然后在 TUI 或已加载的 Feishu chat 中执行：
 
@@ -176,7 +178,7 @@ hello
 
 ## Expected Log Signals
 
-当链路正常时，`openagent-feishu` 终端里应该依次看到这些关键信号：
+当链路正常时，运行 `openagent-host --channel feishu` 的终端里应该依次看到这些关键信号：
 
 ```text
 feishu-host> starting long connection
@@ -262,7 +264,7 @@ No active session is bound for this chat yet. Send a normal message first.
 
 1. `lark-cli auth status` 是否显示当前账号已登录
 2. Python host 是否已经打印 `feishu-host> starting long connection`
-3. 同一台机器上是否已经有另一个 `openagent-feishu` / `python -m tests.support.feishu_e2e_host` 在运行
+3. 同一台机器上是否已经有另一个 `openagent-host --channel feishu` / `python -m tests.support.feishu_e2e_host` 在运行
 4. 环境变量 `OPENAGENT_FEISHU_APP_ID` 和 `OPENAGENT_FEISHU_APP_SECRET` 是否正确
 5. provider 是否可用，特别是 `OPENAGENT_BASE_URL` 和 `OPENAGENT_MODEL`
 6. host 是否打印了 `received raw event`

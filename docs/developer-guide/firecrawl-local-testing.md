@@ -73,7 +73,7 @@ export OPENAGENT_FIRECRAWL_API_KEY=...
 然后再启动：
 
 ```bash
-python -m openagent.cli.host
+uv run openagent-host
 ```
 
 ## Optional Smoke Tests

@@ -8,15 +8,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
 
-from openagent.context_governance import ContextGovernance
-from openagent.gateway.channels.feishu import FeishuChannelAdapter
-from openagent.gateway.hosts.feishu import (
+from openagent.gateway.channels.feishu import (
+    FeishuChannelAdapter,
     FeishuHostRunLock,
     FeishuLongConnectionHost,
+    FileFeishuInboundDedupeStore,
     OfficialFeishuBotClient,
 )
-from openagent.gateway.hosts.feishu_dedupe import FileFeishuInboundDedupeStore
 from openagent.harness import ModelProviderAdapter, SimpleHarness
+from openagent.harness.context import ContextGovernance
 from openagent.harness.model_io import FileModelIoCapture
 from openagent.harness.providers import load_model_from_env
 from openagent.object_model import JsonObject

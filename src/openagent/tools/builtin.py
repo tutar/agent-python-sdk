@@ -400,8 +400,8 @@ class WebFetchTool(_BuiltinTool):
         return ToolResult(
             tool_name=self.name,
             success=True,
-            content=cast(list[JsonValue], [document.content]),
-            structured_content=cast(JsonObject, document.to_dict()),
+            content=[document.content],
+            structured_content=document.to_dict(),
         )
 
 
@@ -444,10 +444,7 @@ class WebSearchTool(_BuiltinTool):
     def call(self, arguments: dict[str, object]) -> ToolResult:
         query = str(arguments["query"])
         results = self.backend.search(query)
-        structured_results: list[JsonValue] = cast(
-            list[JsonValue],
-            [cast(JsonValue, to_json_value(result)) for result in results],
-        )
+        structured_results: list[JsonValue] = [to_json_value(result) for result in results]
         return ToolResult(
             tool_name=self.name,
             success=True,

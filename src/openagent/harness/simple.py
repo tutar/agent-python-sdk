@@ -11,15 +11,12 @@ from pathlib import Path
 from time import perf_counter
 from typing import cast
 
-from openagent.context_governance import (
-    ContextGovernance,
-    ContextReport,
-)
 from openagent.harness.bootstrap import (
     BootstrapPromptAssembler,
     InitialUserBootstrap,
     default_workspace_root_from_metadata,
 )
+from openagent.harness.context import ContextGovernance, ContextReport
 from openagent.harness.model_io import ModelIoCapture, NoOpModelIoCapture
 from openagent.harness.models import (
     AgentRuntime,

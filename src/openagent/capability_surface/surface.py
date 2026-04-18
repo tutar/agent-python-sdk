@@ -1,58 +1,21 @@
-"""Unified capability surface and host projection helpers."""
+"""High-level capability surface facade."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import StrEnum
 from typing import Any
 
-from openagent.object_model import JsonObject, SerializableModel
+from openagent.capability_surface.models import (
+    CapabilityDescriptor,
+    CapabilityOrigin,
+    InvocableEntry,
+)
+from openagent.capability_surface.projection import (
+    apply_capability_filters,
+    project_descriptors_for_host,
+)
+from openagent.object_model import JsonObject
 from openagent.tools import Command, SkillDefinition, ToolDefinition
-
-
-class CapabilityOriginType(StrEnum):
-    BUILTIN = "builtin"
-    BUNDLED = "bundled"
-    PLUGIN = "plugin"
-    USER = "user"
-    PROJECT = "project"
-    MANAGED = "managed"
-    MCP = "mcp"
-    REMOTE = "remote"
-
-
-@dataclass(slots=True)
-class CapabilityOrigin(SerializableModel):
-    origin_type: CapabilityOriginType
-    package_id: str | None = None
-    provider_id: str | None = None
-    installation_scope: str | None = None
-
-
-@dataclass(slots=True)
-class InvocableEntry(SerializableModel):
-    entry_id: str
-    entry_type: str
-    display_name: str
-    description: str
-    source_origin: JsonObject
-    invocation_mode: str
-    visible_to_model: bool = True
-    visible_to_user: bool = True
-    metadata: JsonObject = field(default_factory=dict)
-
-
-@dataclass(slots=True)
-class CapabilityDescriptor(SerializableModel):
-    capability_id: str
-    capability_type: str
-    display_name: str
-    description: str
-    invocation_mode: str
-    origin: JsonObject
-    visible_to_model: bool = True
-    visible_to_user: bool = True
-    metadata: JsonObject = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -136,7 +99,7 @@ class CapabilitySurface:
         filters: JsonObject | None = None,
     ) -> list[str]:
         del scope
-        descriptors = self._apply_filters(self.describe_capabilities(), filters)
+        descriptors = apply_capability_filters(self.describe_capabilities(), filters)
         return [descriptor.capability_id for descriptor in descriptors]
 
     def list_command_surface(
@@ -146,7 +109,7 @@ class CapabilitySurface:
     ) -> list[InvocableEntry]:
         del scope
         entries: list[InvocableEntry] = []
-        for descriptor in self._apply_filters(self.describe_capabilities(), filters):
+        for descriptor in apply_capability_filters(self.describe_capabilities(), filters):
             if descriptor.capability_type not in {"command", "skill"}:
                 continue
             entries.append(
@@ -178,7 +141,7 @@ class CapabilitySurface:
 
     def project_for_host(self, host_profile: str) -> JsonObject:
         descriptors = self.describe_capabilities()
-        host_descriptors = self._project_descriptors_for_host(descriptors, host_profile)
+        host_descriptors = project_descriptors_for_host(descriptors, host_profile)
         return {
             "host_profile": host_profile,
             "capability_count": len(host_descriptors),
@@ -188,63 +151,3 @@ class CapabilitySurface:
                 for entry in self.list_command_surface(filters={"host_profile": host_profile})
             ],
         }
-
-    def _apply_filters(
-        self,
-        descriptors: list[CapabilityDescriptor],
-        filters: JsonObject | None,
-    ) -> list[CapabilityDescriptor]:
-        if filters is None:
-            return descriptors
-
-        filtered = descriptors
-        capability_type = filters.get("capability_type")
-        if isinstance(capability_type, str):
-            filtered = [
-                descriptor
-                for descriptor in filtered
-                if descriptor.capability_type == capability_type
-            ]
-
-        host_profile = filters.get("host_profile")
-        if isinstance(host_profile, str):
-            filtered = self._project_descriptors_for_host(filtered, host_profile)
-
-        visibility = filters.get("visibility")
-        if visibility == "model":
-            filtered = [descriptor for descriptor in filtered if descriptor.visible_to_model]
-        if visibility == "user":
-            filtered = [descriptor for descriptor in filtered if descriptor.visible_to_user]
-
-        origin_type = filters.get("origin_type")
-        if isinstance(origin_type, str):
-            filtered = [
-                descriptor
-                for descriptor in filtered
-                if descriptor.origin.get("origin_type") == origin_type
-            ]
-        return filtered
-
-    def _project_descriptors_for_host(
-        self,
-        descriptors: list[CapabilityDescriptor],
-        host_profile: str,
-    ) -> list[CapabilityDescriptor]:
-        if host_profile in {"local", "terminal"}:
-            return descriptors
-
-        if host_profile == "feishu":
-            return [
-                descriptor
-                for descriptor in descriptors
-                if descriptor.metadata.get("kind") != "local_ui"
-            ]
-
-        if host_profile == "cloud":
-            return [
-                descriptor
-                for descriptor in descriptors
-                if descriptor.metadata.get("kind") not in {"local_ui", "local"}
-            ]
-
-        return descriptors

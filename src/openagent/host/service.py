@@ -426,7 +426,7 @@ class OpenAgentHost:
             (self.config.terminal_host, self.config.terminal_port),
             _TerminalConnectionHandler,
         )
-        self._terminal_server.app = self  # type: ignore[attr-defined]
+        self._terminal_server.app = self
         self.config.terminal_port = int(self._terminal_server.server_address[1])
         self._terminal_thread = threading.Thread(
             target=self._terminal_server.serve_forever,

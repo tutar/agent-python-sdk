@@ -155,6 +155,12 @@ executor 现在支持一个可选的 `ToolPolicyEngine`：
 
 `CapabilitySurface` 的目标是把不同来源的能力统一成一个投影视图。
 
+当前它已经不是单文件，而是一个 shared package：
+
+- `capability_surface/models.py`
+- `capability_surface/projection.py`
+- `capability_surface/surface.py`
+
 当前可以统一投影：
 
 - tools

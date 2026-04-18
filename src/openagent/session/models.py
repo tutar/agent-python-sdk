@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import cast
 
 from openagent.object_model import JsonObject, JsonValue, RuntimeEvent, SerializableModel
 from openagent.session.enums import SessionStatus
@@ -62,9 +61,7 @@ class SessionRecord(SerializableModel):
         raw_events = raw_events_value if isinstance(raw_events_value, list) else []
         raw_pending = raw_pending_value if isinstance(raw_pending_value, list) else []
         short_term_memory = (
-            cast(JsonObject, raw_short_term_memory)
-            if isinstance(raw_short_term_memory, dict)
-            else None
+            dict(raw_short_term_memory) if isinstance(raw_short_term_memory, dict) else None
         )
         return cls(
             session_id=str(data["session_id"]),

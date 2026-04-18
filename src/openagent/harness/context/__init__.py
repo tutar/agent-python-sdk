@@ -1,8 +1,8 @@
-"""Compatibility exports for context governance."""
+"""Context assembly governance exports."""
 
-from openagent.harness.context import (
+from openagent.harness.context.governance import ContextGovernance
+from openagent.harness.context.models import (
     CompactResult,
-    ContextGovernance,
     ContextReport,
     ContinuationBudgetPlan,
     ExternalizedToolResult,

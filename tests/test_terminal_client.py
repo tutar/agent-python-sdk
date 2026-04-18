@@ -23,7 +23,7 @@ def _start_host(tmp_path: Path) -> tuple[Popen[str], int]:
     env["OPENAGENT_BINDING_ROOT"] = str(tmp_path / "bindings")
     env["PYTHONPATH"] = str(repo_root / "src")
     process = Popen(
-        [sys.executable, "-m", "openagent.cli.host"],
+        [sys.executable, "-m", "openagent.cli"],
         stdin=PIPE,
         stdout=PIPE,
         stderr=PIPE,

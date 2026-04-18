@@ -4,6 +4,7 @@
 
 入口按模块拆分：
 
+- [Module Map](./module-map.md)
 - [Object Model](./object-model.md)
 - [Harness And Session](./harness-and-session.md)
 - [Model Provider And Providers](./model-provider-and-providers.md)
@@ -15,11 +16,12 @@
 
 阅读顺序建议：
 
-1. `object-model`
-2. `harness-and-session`
-3. `model-provider-and-providers`
-4. `tools-and-capability-surface`
-5. `skills`
-6. `gateway-and-frontend`
-7. `agent-observability`
-8. `orchestration-and-sandbox`
+1. `module-map`
+2. `object-model`
+3. `harness-and-session`
+4. `model-provider-and-providers`
+5. `tools-and-capability-surface`
+6. `skills`
+7. `gateway-and-frontend`
+8. `agent-observability`
+9. `orchestration-and-sandbox`

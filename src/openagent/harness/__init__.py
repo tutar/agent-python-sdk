@@ -7,6 +7,18 @@ from openagent.harness.bootstrap import (
     PromptSection,
     ResolvedPromptSections,
 )
+from openagent.harness.context import (
+    CompactResult,
+    ContextGovernance,
+    ContextReport,
+    ContinuationBudgetPlan,
+    ExternalizedToolResult,
+    OverflowRecoveryResult,
+    PromptCacheBreakResult,
+    PromptCachePlan,
+    PromptCacheSnapshot,
+    PromptCacheStrategyName,
+)
 from openagent.harness.interfaces import Harness
 from openagent.harness.model_io import (
     FileModelIoCapture,
@@ -50,6 +62,11 @@ __all__ = [
     "AnthropicMessagesModelAdapter",
     "BootstrapPromptAssembler",
     "CancelledTurn",
+    "CompactResult",
+    "ContextGovernance",
+    "ContextReport",
+    "ContinuationBudgetPlan",
+    "ExternalizedToolResult",
     "FileModelIoCapture",
     "Harness",
     "InitialUserBootstrap",
@@ -66,7 +83,12 @@ __all__ = [
     "ModelTurnRequest",
     "ModelTurnResponse",
     "OpenAIChatCompletionsModelAdapter",
+    "OverflowRecoveryResult",
     "PromptBlocks",
+    "PromptCacheBreakResult",
+    "PromptCachePlan",
+    "PromptCacheSnapshot",
+    "PromptCacheStrategyName",
     "PromptSection",
     "ProviderConfigurationError",
     "ProviderError",
