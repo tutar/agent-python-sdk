@@ -192,6 +192,7 @@ openagent-host --channel feishu
 - 启动同一个 Python host
 - 预加载 Feishu channel
 - 飞书首条正常消息进入时，为该 chat 懒创建 `SessionBinding` 和 `HarnessInstance`
+- 普通 Feishu 回复优先通过单 turn reply card 承载，并优先用 CardKit 流式更新；如果当前租户下 CardKit 路径不可用，会自动降级为对同一张消息卡片做 patch 更新
 
 方式二：运行中从 terminal TUI 或已加载的 Feishu channel 里执行：
 
@@ -208,6 +209,8 @@ openagent-host --channel feishu
 ```
 
 这些运行中输入的值只在当前 host 进程内有效，不会写回环境变量，也不会落盘。
+
+Feishu 当前审批交互不再依赖聊天里的 `/approve`、`/reject`，而是通过 reply card 上的 `Approve` / `Reject` 按钮完成。`interrupt`、`resume` 继续属于主动控制指令，不承载在审批卡片按钮中。
 
 如果这时你再启动 terminal TUI：
 

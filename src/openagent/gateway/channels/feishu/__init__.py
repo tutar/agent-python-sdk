@@ -9,6 +9,7 @@ from .assembly import (
     create_feishu_runtime,
     main,
 )
+from .cards import FileFeishuCardDeliveryStore
 from .client import OfficialFeishuBotClient
 from .dedupe import FileFeishuInboundDedupeStore, InMemoryFeishuInboundDedupeStore
 from .host import (
@@ -25,6 +26,7 @@ __all__ = [
     "FeishuAppConfig",
     "FeishuBotClient",
     "FeishuChannelAdapter",
+    "FileFeishuCardDeliveryStore",
     "FeishuHostRunLock",
     "FeishuLongConnectionHost",
     "InMemoryFeishuInboundDedupeStore",

@@ -1,6 +1,6 @@
 # Feishu Cards And Streaming Replies
 
-Status: proposed
+Status: completed
 
 ## Summary
 
@@ -15,38 +15,28 @@ Status: proposed
 
 ## Current State
 
-- Feishu 当前仍使用 slash 文本命令：
-  - `/approve`
-  - `/reject`
-  - `/interrupt`
-  - `/resume`
-  - `/channel`
-  - `/channel-config`
-- 当前回复仍以文本消息为主
+- Feishu 控制流此前依赖 slash 文本命令
+- 当前 `/channel` 与 `/channel-config` 仍保留为暂存的 management 路径
+- reply card 与 card action 现已落地
 - reaction 已支持轻量状态提示
-- 当前没有任何 CardKit / card action / streaming updates 实现基础
 
 ## Proposed Design
 
-- 在 Feishu 中完全替换 slash 命令，不保留 slash 兼容路径
-- 对审批、恢复、host/channel 管理使用交互卡片按钮
-- 普通 agent 回复优先通过卡片承载，并用飞书卡片 streaming updates 做增量更新
+- 在 Feishu 中将控制命令替换为交互卡片按钮
+- `/channel` 与 `/channel-config` 不在本次实现范围，后续转到 host management page
+- 普通 agent 回复通过单 turn reply card 承载，并通过 Feishu CardKit streaming updates 形成流式体验
 - reaction 保留为轻量状态提示，但不承担命令交互职责
 
 ## Replaced Feishu Slash Commands
 
 - `/approve`
 - `/reject`
-- `/interrupt`
-- `/resume`
-- `/channel`
-- `/channel-config`
 
 ## Interaction Model
 
 - 需要人工操作时，Feishu host 发送交互卡片
 - 卡片按钮回传 action payload
-- host 将 action payload 映射为现有 canonical control / management intent
+- host 将 action payload 映射为现有 canonical control intent
 - 普通回复开始时创建卡片，生成中持续更新，完成后进入稳定终态
 
 ## Required States
@@ -63,6 +53,18 @@ Status: proposed
 - Feishu host 负责 card action ingress
 - Feishu host 负责 card create / update / finalize
 - 这套 card 交互不提升为跨 channel 通用契约
+
+## Delivered Behavior
+
+- 普通 Feishu turn 现在默认创建单 turn reply card，并优先通过 CardKit streaming updates 更新同一张卡；如果租户权限或平台能力不足，会自动降级为对同一张消息卡片做 patch 更新
+- `requires_action` 通过卡片按钮触发 `approve/reject`
+- 审批卡片按钮只包含 `Approve` / `Reject`
+- `interrupt` 与 `resume` 继续保留为主动控制语义，不承载在审批卡片按钮中
+- card action 默认通过飞书长连接事件进入 host
+- 卡片发送/更新失败会进入 file-backed retry queue
+- pending card 重试按当前 `conversation_id` 隔离
+- 在补发成功前，原消息保持 `OneSecond` reaction；成功后切 `DONE`
+- reply card 的 CardKit 跟踪标识以 `card_id + uuid + sequence` 维护，不再依赖 `im.v1.message.update`
 
 ## 参考
 - 卡片按钮：https://open.feishu.cn/document/feishu-cards/card-json-v2-components/interactive-components/button

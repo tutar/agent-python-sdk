@@ -7,11 +7,8 @@ from dataclasses import dataclass, field
 
 from openagent.gateway import (
     FeishuAppConfig,
-    FeishuChannelAdapter,
-    FeishuHostRunLock,
-    FeishuLongConnectionHost,
-    OfficialFeishuBotClient,
     create_feishu_gateway,
+    create_feishu_host,
 )
 from openagent.harness import ModelTurnRequest, ModelTurnResponse
 from openagent.object_model import ToolResult
@@ -126,7 +123,7 @@ class DeterministicFeishuModel:
         return ModelTurnResponse(assistant_message=f"e2e reply: {content}")
 
 
-def create_feishu_e2e_host_from_env() -> FeishuLongConnectionHost:
+def create_feishu_e2e_host_from_env():
     """Build a deterministic Feishu host for local E2E tests."""
 
     config = FeishuAppConfig.from_env()
@@ -135,16 +132,7 @@ def create_feishu_e2e_host_from_env() -> FeishuLongConnectionHost:
         model=DeterministicFeishuModel(),
         tools=[ApprovalTool(), StreamingTool()],
     )
-    client = OfficialFeishuBotClient(config.app_id, config.app_secret)
-    adapter = gateway.get_channel_adapter("feishu")
-    assert isinstance(adapter, FeishuChannelAdapter)
-    adapter.client = client
-    return FeishuLongConnectionHost(
-        gateway=gateway,
-        adapter=adapter,
-        client=client,
-        run_lock=FeishuHostRunLock(config.app_id, config.lock_root),
-    )
+    return create_feishu_host(gateway, config)
 
 
 def main() -> None:

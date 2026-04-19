@@ -27,7 +27,9 @@ def test_channel_command_lists_loaded_available_and_usage(tmp_path: Path) -> Non
     assert "/channel-config feishu app_id <value>" in response["usage"]
 
 
-def test_channel_feishu_reports_missing_config(tmp_path: Path) -> None:
+def test_channel_feishu_reports_missing_config(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("OPENAGENT_FEISHU_APP_ID", raising=False)
+    monkeypatch.delenv("OPENAGENT_FEISHU_APP_SECRET", raising=False)
     host = build_host(tmp_path)
 
     responses = host.handle_management_command("/channel feishu")

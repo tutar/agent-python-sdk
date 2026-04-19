@@ -24,10 +24,9 @@
 
 - 机器人私聊 `p2p`
 - 普通文本消息
-- `/approve`
-- `/reject`
-- `/interrupt`
-- `/resume`
+- reply card 创建
+- CardKit 流式更新或同卡 patch 降级
+- approval/progress card 状态流
 
 当前不覆盖：
 
@@ -35,6 +34,7 @@
 - `@mention` 自动化
 - thread 深入联调
 - 自动化真实网络测试
+- 真实卡片按钮点击自动化
 
 ## Prerequisites
 
@@ -125,9 +125,9 @@ uv run openagent-host
 
 这个进程负责：
 
-- 从飞书长连接接收事件
+- 从飞书长连接接收消息与 card action 事件
 - 归一化消息并注入 gateway
-- 将 agent 的回复重新发送回飞书
+- 将 agent 的单 turn reply card 回写到飞书；优先走 CardKit 流式更新，必要时降级为对同一张消息卡片做 patch 更新
 
 ## Find The Target Contact
 
@@ -167,14 +167,7 @@ hello
 
 1. `hello`
 2. `admin rotate`
-3. `/approve`
-4. `/resume`
-
-如果你的当前模型或工具配置没有启用管理员工具流，也可以先只验证：
-
-1. `hello`
-2. 第二次再发 `hello again`
-3. `/resume`
+3. `run stream`
 
 ## Expected Log Signals
 
@@ -185,8 +178,12 @@ feishu-host> starting long connection
 feishu-host> received raw event ...
 feishu-host> agent add_reaction message_id=... reaction=...
 feishu-host> normalized input kind=user_message conversation=...
-feishu-host> sending outbound event=assistant_message chat=...
-feishu-host> agent send_text chat=... thread=... text=...
+feishu-host> sending reply card request_message_id=... status=running
+feishu-host> resolving card id message_id=...
+feishu-host> agent set_card_streaming card_id=... state=enable sequence=...
+feishu-host> agent stream_update_card card_id=... sequence=...
+feishu-host> cardkit streaming unavailable; falling back to message patch request_message_id=...
+feishu-host> agent patch_card message_id=...
 feishu-host> agent remove_reaction message_id=... reaction_id=...
 feishu-host> agent add_reaction message_id=... reaction=...
 feishu-host> skipped duplicate inbound message_id=...
@@ -198,8 +195,8 @@ feishu-host> skipped duplicate inbound message_id=...
 - 已收到飞书服务推送事件
 - 已归一化为 gateway 可处理的输入
 - 已为原消息打上“处理中” reaction（`emoji_type=OneSecond`）
-- 已将 agent 回复投影为飞书消息
-- 已通过官方 Python SDK 调用发送接口
+- 已创建单 turn reply card，并优先切到 CardKit 流式更新
+- 如果 CardKit 权限或平台能力不足，会降级到同一张消息卡片的 patch 更新，而不是重建新卡
 - 已将原消息从“处理中”切换到“完成” reaction（`emoji_type=DONE`）
 - 同一条飞书消息如果被平台重复投递，会按 `message_id` 被 host 去重
 
@@ -213,9 +210,9 @@ feishu-host> skipped duplicate inbound message_id=...
 
 1. 第一条私聊消息会自动创建并绑定 session
 2. 同一个 chat 的后续消息继续落到同一个 session
-3. `/resume` 会回放当前 chat 绑定 session 的事件
-4. 如果没有已绑定 session 就直接发控制命令，会收到提示消息
-5. 同一条消息如果被飞书重复投递，只会处理一次
+3. reply card 会在同一 turn 内持续更新到稳定终态
+4. 同一条消息如果被飞书重复投递，只会处理一次
+5. pending reply card 只会在当前 `conversation_id` 内重试，不会被别的 chat 触发
 
 当前 session id 规则来自 host：
 
@@ -228,8 +225,8 @@ feishu-session:<conversation_id>
 ### Case 1: Basic reply
 
 - 向机器人发送 `hello`
-- 期望飞书侧收到一条 assistant reply
-- 期望 host 日志出现 `received raw event` 和 `agent send_text`
+- 期望飞书侧出现一张 reply card
+- 期望 host 日志出现 `received raw event`、`sending reply card`、`resolving card id`、`agent stream_update_card`
 
 ### Case 2: Session reuse
 
@@ -240,23 +237,14 @@ feishu-session:<conversation_id>
 ### Case 3: Approval flow
 
 - 发送 `admin rotate`
-- 期望飞书侧提示 approval required
-- 发送 `/approve`
-- 期望工具继续执行并最终回复
+- 期望飞书侧 reply card 进入 `requires_action`
+- 真实按钮点击联调需通过飞书客户端完成，当前自动化 E2E 不覆盖
 
-### Case 4: Resume flow
+### Case 4: Progress flow
 
-- 发送 `/resume`
-- 期望收到当前会话回放结果
-
-### Case 5: Missing-session control
-
-- 在一个尚未建立 session 的 chat 中先发 `/approve`
-- 期望收到：
-
-```text
-No active session is bound for this chat yet. Send a normal message first.
-```
+- 发送 `run stream`
+- 期望 reply card 先进入 `running`
+- 最终进入 `completed`
 
 ## Troubleshooting
 
@@ -280,7 +268,7 @@ No active session is bound for this chat yet. Send a normal message first.
 如果控制命令没有生效，先确认：
 
 - 当前 chat 是否已经通过普通消息建立过 session
-- 发出的命令是否是 `/approve`、`/reject`、`/interrupt`、`/resume`
+- 审批卡片上的 `Approve` / `Reject` 是否真的被飞书回传进长连接事件
 
 如果私聊正常、但群聊 `@openagent` 完全没有任何 `received raw event`，优先检查飞书开放平台里的群消息事件投递配置。
 当前 OpenAgent 的群聊 E2E 代码路径已经准备好，但如果应用侧没有把群消息投递给 bot，Python host 端不会收到任何原始事件。

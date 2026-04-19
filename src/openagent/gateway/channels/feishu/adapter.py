@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Protocol
 
 from openagent.object_model import JsonObject
@@ -16,7 +16,7 @@ from ..tui.terminal import _default_terminal_event_types
 class FeishuBotClient(Protocol):
     """Minimal Feishu client surface used by the host."""
 
-    def start(self, event_handler: Callable[[JsonObject], None]) -> None:
+    def start(self, event_handler: Callable[[JsonObject], JsonObject | None]) -> None:
         """Start receiving Feishu events and forward them to the host."""
 
     def close(self) -> None:
@@ -24,6 +24,31 @@ class FeishuBotClient(Protocol):
 
     def send_text(self, chat_id: str, text: str, thread_id: str | None = None) -> None:
         """Send a text reply to a Feishu chat or thread."""
+
+    def send_card(self, chat_id: str, card: JsonObject, thread_id: str | None = None) -> str:
+        """Send an interactive card reply and return the created message id."""
+
+    def resolve_card_id(self, message_id: str) -> str:
+        """Resolve a Feishu message id into a CardKit card id."""
+
+    def enable_card_stream(self, card_id: str, *, uuid: str, sequence: int) -> None:
+        """Enable CardKit streaming mode for a card."""
+
+    def disable_card_stream(self, card_id: str, *, uuid: str, sequence: int) -> None:
+        """Disable CardKit streaming mode for a card."""
+
+    def stream_update_card(
+        self,
+        card_id: str,
+        card: JsonObject,
+        *,
+        uuid: str,
+        sequence: int,
+    ) -> None:
+        """Update a CardKit card entity during a streaming session."""
+
+    def update_card(self, message_id: str, card: JsonObject) -> None:
+        """Patch a previously created message card by message id."""
 
     def add_reaction(self, message_id: str, reaction_type: str) -> str | None:
         """Add a reaction to a Feishu message and return its reaction id when available."""
@@ -39,8 +64,6 @@ class FeishuChannelAdapter:
     client: FeishuBotClient | None = None
     mention_required_in_group: bool = True
     channel_type: str = "feishu"
-    _progress_seen: dict[tuple[str, str], bool] = field(default_factory=dict)
-
     def accepted_event_types(self) -> list[str]:
         """Expose the local frontend event surface to Feishu."""
 
@@ -109,14 +132,14 @@ class FeishuChannelAdapter:
         )
 
     def project_outbound(self, egress_event: EgressEnvelope) -> JsonObject | None:
-        """Project a gateway egress event into a Feishu text message."""
+        """Project management-only outbound events into Feishu text messages."""
 
         event = egress_event.event
         event_type = str(event.get("event_type", ""))
         payload = event.get("payload")
         normalized_payload = payload if isinstance(payload, dict) else {}
         chat_id, thread_id = self.parse_conversation_id(egress_event.conversation_id)
-        text = self._event_text(event_type, normalized_payload, egress_event.session_id)
+        text = self._event_text(event_type, normalized_payload)
         if text is None:
             return None
         return {
@@ -149,57 +172,21 @@ class FeishuChannelAdapter:
             return chat_id, None
         raise ValueError(f"Invalid Feishu conversation id: {conversation_id}")
 
-    def _event_text(self, event_type: str, payload: JsonObject, session_id: str) -> str | None:
+    def parse_card_action(self, value: JsonObject) -> tuple[str, JsonObject] | None:
+        """Map a Feishu card action value back into a canonical control payload."""
+
+        subtype = str(value.get("subtype", "")).strip()
+        if subtype == "permission_response":
+            return "control", {"subtype": subtype, "approved": bool(value.get("approved", False))}
+        return None
+
+    def _event_text(self, event_type: str, payload: JsonObject) -> str | None:
         if event_type == "assistant_message":
             message = payload.get("message")
             if message is None:
                 return None
             text = str(message).strip()
             return text or None
-        if event_type == "requires_action":
-            tool_name = str(payload.get("tool_name", "unknown"))
-            return f"Tool approval required for {tool_name}. Reply /approve or /reject."
-        if event_type == "tool_started":
-            tool_name = str(payload.get("tool_name", "unknown"))
-            return f"Running tool: {tool_name}"
-        if event_type == "tool_progress":
-            tool_name = str(payload.get("tool_name", "unknown"))
-            key = (session_id, tool_name)
-            if self._progress_seen.get(key):
-                return None
-            self._progress_seen[key] = True
-            return f"Tool {tool_name} is working..."
-        if event_type == "tool_result":
-            tool_name = str(payload.get("tool_name", "unknown"))
-            self._clear_tool_progress(session_id, tool_name)
-            return f"Tool {tool_name} completed."
-        if event_type == "tool_failed":
-            tool_name = str(payload.get("tool_name", "unknown"))
-            self._clear_tool_progress(session_id, tool_name)
-            reason = (
-                payload.get("reason")
-                or payload.get("error")
-                or payload.get("message")
-                or "unknown error"
-            )
-            return f"Tool {tool_name} failed: {reason}"
-        if event_type == "tool_cancelled":
-            tool_name = str(payload.get("tool_name", "unknown"))
-            self._clear_tool_progress(session_id, tool_name)
-            return f"Tool {tool_name} was cancelled."
-        if event_type == "turn_failed":
-            self._clear_session_progress(session_id)
-            summary = payload.get("summary")
-            if summary:
-                return (
-                    f"Turn failed: {summary}\n"
-                    "Please retry with a clearer request or refine the tool intent."
-                )
-            reason = payload.get("reason") or payload.get("message") or payload
-            return f"Turn failed: {reason}"
-        if event_type == "turn_completed":
-            self._clear_session_progress(session_id)
-            return None
         return None
 
     def _parse_input(self, text: str) -> tuple[str, JsonObject]:
@@ -208,14 +195,6 @@ class FeishuChannelAdapter:
             "/channel-config "
         ):
             return "management", {"command": command}
-        if command == "/approve":
-            return "control", {"subtype": "permission_response", "approved": True}
-        if command == "/reject":
-            return "control", {"subtype": "permission_response", "approved": False}
-        if command == "/interrupt":
-            return "control", {"subtype": "interrupt"}
-        if command == "/resume":
-            return "control", {"subtype": "resume", "after": 0}
         return "user_message", {"content": text}
 
     def _conversation_id(self, chat_id: str, thread_id: str | None) -> str:
@@ -274,11 +253,3 @@ class FeishuChannelAdapter:
         if len(parts) == 1:
             return ""
         return parts[1]
-
-    def _clear_tool_progress(self, session_id: str, tool_name: str) -> None:
-        self._progress_seen.pop((session_id, tool_name), None)
-
-    def _clear_session_progress(self, session_id: str) -> None:
-        stale_keys = [key for key in self._progress_seen if key[0] == session_id]
-        for key in stale_keys:
-            self._progress_seen.pop(key, None)

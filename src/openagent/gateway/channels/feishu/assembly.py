@@ -19,6 +19,7 @@ from openagent.observability import AgentObservability
 from openagent.tools import ToolDefinition
 
 from .adapter import FeishuChannelAdapter
+from .cards import FileFeishuCardDeliveryStore
 from .client import OfficialFeishuBotClient
 from .dedupe import FileFeishuInboundDedupeStore
 from .host import FeishuHostRunLock, FeishuLongConnectionHost
@@ -35,6 +36,7 @@ class FeishuAppConfig:
     workspace_root: str = field(default_factory=os.getcwd)
     lock_root: str = str(Path("/tmp") / "openagent-feishu-locks")
     mention_required_in_group: bool = True
+    card_state_root: str = str(Path(".openagent") / "feishu" / "cards")
 
     @classmethod
     def from_env(cls) -> FeishuAppConfig:
@@ -61,6 +63,10 @@ class FeishuAppConfig:
             str(Path("/tmp") / "openagent-feishu-locks"),
         )
         mention_required = os.getenv("OPENAGENT_FEISHU_GROUP_AT_ONLY", "true").lower() != "false"
+        card_state_root = os.getenv(
+            "OPENAGENT_FEISHU_CARD_STATE_ROOT",
+            str(Path(session_root) / "cards"),
+        )
         return cls(
             app_id=app_id,
             app_secret=app_secret,
@@ -69,6 +75,7 @@ class FeishuAppConfig:
             workspace_root=workspace_root,
             lock_root=lock_root,
             mention_required_in_group=mention_required,
+            card_state_root=card_state_root,
         )
 
 
@@ -134,6 +141,9 @@ def create_feishu_host(
         management_handler=management_handler,
         dedupe_store=FileFeishuInboundDedupeStore(
             str(Path(config.session_root) / "dedupe" / "feishu-message-ids.json")
+        ),
+        card_delivery_store=FileFeishuCardDeliveryStore(
+            str(Path(config.card_state_root) / "delivery.json")
         ),
     )
 

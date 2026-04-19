@@ -53,3 +53,4 @@
 - [Sandbox Contract Expansion](./sandbox-contract-expansion.md)
 - [Conformance Expansion](./conformance-expansion.md)
 - [Feishu Cards And Streaming Replies](./feishu-cards-and-streaming-replies.md)
+- [Feishu Host Management Page](./feishu-host-management-page.md)

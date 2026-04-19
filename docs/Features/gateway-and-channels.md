@@ -29,6 +29,39 @@ gateway 是 harness 域下的 frontend 稳定接入边界。
 
 frontend 当前应通过 `Gateway` 使用 agent，不应该直接持有 harness。
 
+## Feishu
+
+Feishu 是同一个 unified host 上的 chat channel。
+
+### 已支持
+
+- Feishu 长连接消息接收
+- file-backed chat-to-session binding
+- inbound `message_id` 去重
+- 原消息 reaction 状态：
+  - 处理中 `OneSecond`
+  - 完成 `DONE`
+- 每个 user turn 一张 reply card
+- reply card 优先通过 CardKit 流式更新；若租户权限或平台能力不足，会自动降级为对同一张消息卡片做 patch 更新：
+  - running
+  - requires_action
+  - completed
+  - failed
+  - interrupted
+- 审批卡片按钮：
+  - approve
+  - reject
+- card action 默认通过 Feishu 长连接事件进入 host
+- card delivery ledger 与失败重试
+- pending card 重试按当前会话隔离，不会由其他 chat 的新消息触发
+
+### 当前仍保留
+
+- `/channel`
+- `/channel-config`
+
+这两条仍是 Feishu 的临时 management 输入；后续迁到单独的 host management page。
+
 ## Terminal TUI
 
 terminal TUI 当前基于 `React + Ink + Yoga`。

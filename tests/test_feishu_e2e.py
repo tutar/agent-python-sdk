@@ -88,6 +88,23 @@ def _send_private_until_log(
     raise last_error
 
 
+def _wait_for_any_log(
+    host: HostProcess,
+    needles: list[str],
+    *,
+    after: int = 0,
+    timeout: float = 20,
+) -> str:
+    last_error: AssertionError | None = None
+    for needle in needles:
+        try:
+            return host.wait_for(needle, after=after, timeout=timeout)
+        except AssertionError as exc:
+            last_error = exc
+    assert last_error is not None
+    raise last_error
+
+
 @dataclass(slots=True)
 class HostProcess:
     process: subprocess.Popen[str]
@@ -255,7 +272,7 @@ def test_feishu_e2e_missing_session_control(
 
 
 @pytest.mark.feishu_e2e
-def test_feishu_e2e_private_reply_and_resume(
+def test_feishu_e2e_private_reply_card_lifecycle(
     feishu_e2e_environment: tuple[HostProcess, LarkCliDriver],
 ) -> None:
     host, driver = feishu_e2e_environment
@@ -264,13 +281,18 @@ def test_feishu_e2e_private_reply_and_resume(
 
     host.wait_for("feishu-host> received raw event", after=offset)
     host.wait_for("normalized input kind=user_message", after=offset)
-    host.wait_for("agent send_text", after=offset)
-    host.wait_for("e2e reply: hello", after=offset)
-
-    resume_offset = host.snapshot()
-    driver.send_private("/resume")
-    host.wait_for("normalized input kind=control", after=resume_offset)
-    host.wait_for("e2e reply: hello", after=resume_offset)
+    host.wait_for("sending reply card", after=offset)
+    host.wait_for("resolving card id", after=offset)
+    _wait_for_any_log(
+        host,
+        [
+            "agent stream_update_card",
+            "cardkit streaming unavailable; falling back to message patch",
+            "agent patch_card",
+        ],
+        after=offset,
+    )
+    host.wait_for("status=completed", after=offset)
 
 
 @pytest.mark.feishu_e2e
@@ -282,21 +304,13 @@ def test_feishu_e2e_private_approval_and_progress(
         host,
         driver,
         "admin rotate",
-        "Tool approval required for admin",
+        "status=requires_action",
     )
-
-    continue_offset = _send_private_until_log(
-        host,
-        driver,
-        "/approve",
-        "e2e approval completed",
-    )
-    host.wait_for("normalized input kind=control", after=continue_offset)
 
     progress_offset = host.snapshot()
     driver.send_private("run stream")
-    host.wait_for("Tool stream is working...", after=progress_offset)
-    host.wait_for("e2e stream completed", after=progress_offset)
+    host.wait_for("status=running", after=progress_offset)
+    host.wait_for("status=completed", after=progress_offset)
 
 
 @pytest.mark.feishu_group_e2e

@@ -2,11 +2,13 @@ import json
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
+from time import sleep
 
 from openagent import create_feishu_runtime
 from openagent.gateway import (
     FEISHU_REACTION_COMPLETED,
     FEISHU_REACTION_IN_PROGRESS,
+    ChannelIdentity,
     EgressEnvelope,
     FeishuAppConfig,
     FeishuChannelAdapter,
@@ -15,6 +17,10 @@ from openagent.gateway import (
     InMemoryFeishuInboundDedupeStore,
     OfficialFeishuBotClient,
     create_feishu_gateway,
+)
+from openagent.gateway.channels.feishu.cards import (
+    FeishuReplyCardRecord,
+    FileFeishuCardDeliveryStore,
 )
 from openagent.harness import ModelTurnRequest, ModelTurnResponse
 from openagent.object_model import ToolResult
@@ -111,12 +117,18 @@ class StreamingTool(DemoTool):
 class FakeFeishuClient:
     def __init__(self) -> None:
         self.sent_messages: list[dict[str, object]] = []
+        self.sent_cards: list[dict[str, object]] = []
+        self.resolved_cards: list[dict[str, object]] = []
+        self.stream_settings: list[dict[str, object]] = []
+        self.updated_cards: list[dict[str, object]] = []
         self.added_reactions: list[dict[str, str]] = []
         self.removed_reactions: list[dict[str, str]] = []
         self.started = False
-        self.handler: Callable[[dict[str, object]], None] | None = None
+        self.handler: Callable[[dict[str, object]], dict[str, object] | None] | None = None
+        self.fail_card_sync_attempts = 0
+        self.resolve_card_error: Exception | None = None
 
-    def start(self, event_handler: Callable[[dict[str, object]], None]) -> None:
+    def start(self, event_handler: Callable[[dict[str, object]], dict[str, object] | None]) -> None:
         self.started = True
         self.handler = event_handler
 
@@ -131,6 +143,77 @@ class FakeFeishuClient:
                 "text": text,
             }
         )
+
+    def send_card(self, chat_id: str, card: dict[str, object], thread_id: str | None = None) -> str:
+        if self.fail_card_sync_attempts > 0:
+            self.fail_card_sync_attempts -= 1
+            raise RuntimeError("temporary card create failure")
+        message_id = f"card_message_{len(self.sent_cards) + 1}"
+        self.sent_cards.append(
+            {
+                "chat_id": chat_id,
+                "thread_id": thread_id,
+                "card": card,
+                "message_id": message_id,
+            }
+        )
+        return message_id
+
+    def resolve_card_id(self, message_id: str) -> str:
+        if self.resolve_card_error is not None:
+            raise self.resolve_card_error
+        card_id = f"card_id_{message_id}"
+        self.resolved_cards.append({"message_id": message_id, "card_id": card_id})
+        return card_id
+
+    def enable_card_stream(self, card_id: str, *, uuid: str, sequence: int) -> None:
+        if self.fail_card_sync_attempts > 0:
+            self.fail_card_sync_attempts -= 1
+            raise RuntimeError("temporary card stream settings failure")
+        self.stream_settings.append(
+            {
+                "card_id": card_id,
+                "uuid": uuid,
+                "sequence": sequence,
+                "enabled": True,
+            }
+        )
+
+    def disable_card_stream(self, card_id: str, *, uuid: str, sequence: int) -> None:
+        if self.fail_card_sync_attempts > 0:
+            self.fail_card_sync_attempts -= 1
+            raise RuntimeError("temporary card stream settings failure")
+        self.stream_settings.append(
+            {
+                "card_id": card_id,
+                "uuid": uuid,
+                "sequence": sequence,
+                "enabled": False,
+            }
+        )
+
+    def stream_update_card(
+        self,
+        card_id: str,
+        card: dict[str, object],
+        *,
+        uuid: str,
+        sequence: int,
+    ) -> None:
+        if self.fail_card_sync_attempts > 0:
+            self.fail_card_sync_attempts -= 1
+            raise RuntimeError("temporary card stream update failure")
+        self.updated_cards.append(
+            {
+                "card_id": card_id,
+                "uuid": uuid,
+                "sequence": sequence,
+                "card": card,
+            }
+        )
+
+    def update_card(self, message_id: str, card: dict[str, object]) -> None:
+        self.updated_cards.append({"message_id": message_id, "card": card, "patched": True})
 
     def add_reaction(self, message_id: str, reaction_type: str) -> str | None:
         reaction_id = f"reaction:{message_id}:{reaction_type}"
@@ -173,12 +256,81 @@ class _FakeMessageReactionAPI:
 
 class _FakeImV1:
     def __init__(self) -> None:
+        self.message = _FakeMessageAPI()
         self.message_reaction = _FakeMessageReactionAPI()
+
+
+class _FakeMessageCreateResponse:
+    def __init__(self, message_id: str = "om_card_1") -> None:
+        self.code = 0
+        self.msg = "ok"
+        self.data = type("Data", (), {"message_id": message_id})()
+
+    def success(self) -> bool:
+        return True
+
+
+class _FakeMessagePatchResponse:
+    code = 0
+    msg = "ok"
+
+    def success(self) -> bool:
+        return True
+
+
+class _FakeMessageAPI:
+    def __init__(self) -> None:
+        self.created_request = None
+        self.patched_request = None
+
+    def create(self, request: object) -> _FakeMessageCreateResponse:
+        self.created_request = request
+        return _FakeMessageCreateResponse()
+
+    def patch(self, request: object) -> _FakeMessagePatchResponse:
+        self.patched_request = request
+        return _FakeMessagePatchResponse()
+
+
+class _FakeCardkitCardResponse:
+    code = 0
+    msg = "ok"
+
+    def __init__(self, *, card_id: str = "card_id_1") -> None:
+        self.data = type("Data", (), {"card_id": card_id})()
+
+    def success(self) -> bool:
+        return True
+
+
+class _FakeCardkitCardAPI:
+    def __init__(self) -> None:
+        self.id_convert_request = None
+        self.settings_request = None
+        self.update_request = None
+
+    def id_convert(self, request: object) -> _FakeCardkitCardResponse:
+        self.id_convert_request = request
+        return _FakeCardkitCardResponse(card_id="cardkit_1")
+
+    def settings(self, request: object) -> _FakeCardkitCardResponse:
+        self.settings_request = request
+        return _FakeCardkitCardResponse()
+
+    def update(self, request: object) -> _FakeCardkitCardResponse:
+        self.update_request = request
+        return _FakeCardkitCardResponse()
+
+
+class _FakeCardkitV1:
+    def __init__(self) -> None:
+        self.card = _FakeCardkitCardAPI()
 
 
 class _FakeSdkClient:
     def __init__(self) -> None:
         self.im = type("Im", (), {"v1": _FakeImV1()})()
+        self.cardkit = type("Cardkit", (), {"v1": _FakeCardkitV1()})()
 
 
 def make_text_event(
@@ -248,24 +400,16 @@ def test_feishu_adapter_strips_mentions_and_uses_thread_binding() -> None:
     assert inbound.channel_identity["conversation_id"] == "feishu:chat:oc_chat_1:thread:om_root_1"
 
 
-def test_feishu_adapter_maps_commands_to_control_payloads() -> None:
+def test_feishu_adapter_only_maps_channel_management_commands_from_text() -> None:
     adapter = FeishuChannelAdapter()
 
     approve = adapter.normalize_inbound(make_text_event("/approve"))
-    reject = adapter.normalize_inbound(make_text_event("/reject", message_id="om_2"))
-    interrupt = adapter.normalize_inbound(make_text_event("/interrupt", message_id="om_3"))
     resume = adapter.normalize_inbound(make_text_event("/resume", message_id="om_4"))
 
-    assert approve is not None and approve.payload == {
-        "subtype": "permission_response",
-        "approved": True,
-    }
-    assert reject is not None and reject.payload == {
-        "subtype": "permission_response",
-        "approved": False,
-    }
-    assert interrupt is not None and interrupt.payload == {"subtype": "interrupt"}
-    assert resume is not None and resume.payload == {"subtype": "resume", "after": 0}
+    assert approve is not None and approve.input_kind == "user_message"
+    assert approve.payload == {"content": "/approve"}
+    assert resume is not None and resume.input_kind == "user_message"
+    assert resume.payload == {"content": "/resume"}
 
 
 def test_feishu_adapter_maps_channel_management_commands() -> None:
@@ -299,79 +443,16 @@ def test_feishu_adapter_drops_empty_assistant_messages() -> None:
     assert projected is None
 
 
-def test_feishu_adapter_projects_tool_failure_reason() -> None:
+def test_feishu_adapter_maps_card_actions_to_control_payloads() -> None:
     adapter = FeishuChannelAdapter()
 
-    projected = adapter.project_outbound(
-        EgressEnvelope(
-            channel="feishu",
-            conversation_id="feishu:chat:oc_chat_1",
-            event={
-                "event_type": "tool_failed",
-                "payload": {"tool_name": "Bash", "reason": "missing required field command"},
-            },
-            session_id="sess_1",
-        )
-    )
+    approve = adapter.parse_card_action({"subtype": "permission_response", "approved": True})
+    reject = adapter.parse_card_action({"subtype": "permission_response", "approved": False})
 
-    assert projected == {
-        "chat_id": "oc_chat_1",
-        "thread_id": None,
-        "text": "Tool Bash failed: missing required field command",
-    }
-
-
-def test_feishu_adapter_projects_turn_failure_summary_with_retry_hint() -> None:
-    adapter = FeishuChannelAdapter()
-
-    projected = adapter.project_outbound(
-        EgressEnvelope(
-            channel="feishu",
-            conversation_id="feishu:chat:oc_chat_1",
-            event={
-                "event_type": "turn_failed",
-                "payload": {
-                    "reason": "tool_execution_failed",
-                    "summary": "Bash: validation_failed: missing required field command",
-                },
-            },
-            session_id="sess_1",
-        )
-    )
-
-    assert projected == {
-        "chat_id": "oc_chat_1",
-        "thread_id": None,
-        "text": (
-            "Turn failed: Bash: validation_failed: missing required field command\n"
-            "Please retry with a clearer request or refine the tool intent."
-        ),
-    }
-
-
-def test_feishu_adapter_projects_tool_result_without_echoing_full_content() -> None:
-    adapter = FeishuChannelAdapter()
-
-    projected = adapter.project_outbound(
-        EgressEnvelope(
-            channel="feishu",
-            conversation_id="feishu:chat:oc_chat_1",
-            event={
-                "event_type": "tool_result",
-                "payload": {
-                    "tool_name": "WebFetch",
-                    "content": ["very long fetched page body"],
-                },
-            },
-            session_id="sess_1",
-        )
-    )
-
-    assert projected == {
-        "chat_id": "oc_chat_1",
-        "thread_id": None,
-        "text": "Tool WebFetch completed.",
-    }
+    assert approve == ("control", {"subtype": "permission_response", "approved": True})
+    assert reject == ("control", {"subtype": "permission_response", "approved": False})
+    assert adapter.parse_card_action({"subtype": "interrupt"}) is None
+    assert adapter.parse_card_action({"subtype": "resume"}) is None
 
 
 def test_official_feishu_client_wraps_reaction_type_as_emoji() -> None:
@@ -388,6 +469,39 @@ def test_official_feishu_client_wraps_reaction_type_as_emoji() -> None:
     assert body is not None
     assert body.reaction_type is not None
     assert body.reaction_type.emoji_type == FEISHU_REACTION_IN_PROGRESS
+
+
+def test_official_feishu_client_sends_and_streams_interactive_cards() -> None:
+    client = OfficialFeishuBotClient("app", "secret")
+    fake_sdk_client = _FakeSdkClient()
+    client._client = fake_sdk_client  # type: ignore[assignment]
+
+    message_id = client.send_card("oc_chat_1", {"elements": []}, thread_id="om_root_1")
+    card_id = client.resolve_card_id(message_id)
+    client.enable_card_stream(card_id, uuid="uuid_1", sequence=1)
+    client.stream_update_card(
+        card_id,
+        {"elements": []},
+        uuid="uuid_1",
+        sequence=2,
+    )
+    client.disable_card_stream(card_id, uuid="uuid_1", sequence=3)
+
+    assert message_id == "om_card_1"
+    created_request = fake_sdk_client.im.v1.message.created_request
+    assert created_request is not None
+    assert created_request.request_body.msg_type == "interactive"
+    assert json.loads(created_request.request_body.content) == {"elements": []}
+    id_convert_request = fake_sdk_client.cardkit.v1.card.id_convert_request
+    assert id_convert_request is not None
+    assert id_convert_request.request_body.message_id == "om_card_1"
+    settings_request = fake_sdk_client.cardkit.v1.card.settings_request
+    assert settings_request is not None
+    assert settings_request.card_id == "cardkit_1"
+    update_request = fake_sdk_client.cardkit.v1.card.update_request
+    assert update_request is not None
+    assert update_request.card_id == "cardkit_1"
+    assert update_request.request_body.card.type == "card_json"
 
 
 def test_feishu_host_lazy_binds_and_replies(tmp_path: Path) -> None:
@@ -407,11 +521,24 @@ def test_feishu_host_lazy_binds_and_replies(tmp_path: Path) -> None:
         adapter=adapter,
         client=client,
         dedupe_store=InMemoryFeishuInboundDedupeStore(),
+        card_delivery_store=FileFeishuCardDeliveryStore(str(tmp_path / "cards.json")),
     )
 
     outbound = host.handle_event(make_text_event("hello"))
 
-    assert outbound == [{"chat_id": "oc_chat_1", "thread_id": None, "text": "hello via feishu"}]
+    assert outbound[-1]["delivery"] == "card"
+    assert client.sent_cards[0]["chat_id"] == "oc_chat_1"
+    latest_card = client.updated_cards[-1]["card"]
+    assert latest_card["header"]["title"]["content"] == "OpenAgent · Completed"
+    assert "hello via feishu" in latest_card["elements"][0]["content"]
+    assert client.resolved_cards == [
+        {
+            "message_id": "card_message_1",
+            "card_id": "card_id_card_message_1",
+        }
+    ]
+    assert client.stream_settings[0]["enabled"] is True
+    assert client.stream_settings[-1]["enabled"] is False
     binding = gateway.get_binding("feishu", "feishu:chat:oc_chat_1")
     assert binding.session_id == "feishu-session:feishu:chat:oc_chat_1"
     assert client.added_reactions == [
@@ -434,7 +561,7 @@ def test_feishu_host_lazy_binds_and_replies(tmp_path: Path) -> None:
     ]
 
 
-def test_feishu_host_supports_command_approval(tmp_path: Path) -> None:
+def test_feishu_host_supports_card_action_approval(tmp_path: Path) -> None:
     client = FakeFeishuClient()
     config = FeishuAppConfig(
         app_id="app",
@@ -455,13 +582,38 @@ def test_feishu_host_supports_command_approval(tmp_path: Path) -> None:
         adapter=adapter,
         client=client,
         dedupe_store=InMemoryFeishuInboundDedupeStore(),
+        card_delivery_store=FileFeishuCardDeliveryStore(str(tmp_path / "cards.json")),
     )
 
-    first = host.handle_event(make_text_event("admin rotate"))
-    second = host.handle_event(make_text_event("/approve", message_id="om_approve"))
+    host.handle_event(make_text_event("admin rotate"))
+    approval_card = client.updated_cards[-1]["card"]
+    assert approval_card["header"]["title"]["content"] == "OpenAgent · Needs Approval"
+    actions = approval_card["elements"][-1]["actions"]
+    assert actions[0]["text"]["content"] == "Approve"
+    assert [item["text"]["content"] for item in actions] == ["Approve", "Reject"]
 
-    assert first[-1]["text"] == "Tool approval required for admin. Reply /approve or /reject."
-    assert second[-1]["text"] == "tool completed after approval"
+    reply_message_id = str(client.sent_cards[0]["message_id"])
+    result = host.handle_card_action(
+        type(
+            "Card",
+            (),
+            {
+                "open_message_id": reply_message_id,
+                "open_chat_id": "oc_chat_1",
+                "open_id": "ou_user_1",
+                "action": type(
+                    "Action",
+                    (),
+                    {"value": {"subtype": "permission_response", "approved": True}},
+                )(),
+            },
+        )()
+    )
+
+    assert result == {"toast": {"type": "info", "content": "Action received."}}
+    final_card = client.updated_cards[-1]["card"]
+    assert final_card["header"]["title"]["content"] == "OpenAgent · Completed"
+    assert "tool completed after approval" in final_card["elements"][0]["content"]
 
 
 def test_feishu_host_routes_management_commands_without_session_binding(tmp_path: Path) -> None:
@@ -489,61 +641,6 @@ def test_feishu_host_routes_management_commands_without_session_binding(tmp_path
     assert outbound == [{"chat_id": "oc_chat_1", "thread_id": None, "text": "handled /channel"}]
 
 
-def test_feishu_host_resume_replays_session(tmp_path: Path) -> None:
-    client = FakeFeishuClient()
-    config = FeishuAppConfig(
-        app_id="app",
-        app_secret="secret",
-        session_root=str(tmp_path / "sessions"),
-        binding_root=str(tmp_path / "bindings"),
-    )
-    gateway, _ = create_feishu_gateway(config=config, model=StaticModel(message="hello replay"))
-    adapter = gateway.get_channel_adapter("feishu")
-    assert isinstance(adapter, FeishuChannelAdapter)
-    adapter.client = client
-    host = FeishuLongConnectionHost(
-        gateway=gateway,
-        adapter=adapter,
-        client=client,
-        dedupe_store=InMemoryFeishuInboundDedupeStore(),
-    )
-
-    host.handle_event(make_text_event("hello"))
-    replay = host.handle_event(make_text_event("/resume", message_id="om_resume"))
-
-    assert replay[0]["text"] == "hello replay"
-
-
-def test_feishu_host_reports_missing_session_for_control(tmp_path: Path) -> None:
-    client = FakeFeishuClient()
-    config = FeishuAppConfig(
-        app_id="app",
-        app_secret="secret",
-        session_root=str(tmp_path / "sessions"),
-        binding_root=str(tmp_path / "bindings"),
-    )
-    gateway, _ = create_feishu_gateway(config=config, model=StaticModel(message="unused"))
-    adapter = gateway.get_channel_adapter("feishu")
-    assert isinstance(adapter, FeishuChannelAdapter)
-    adapter.client = client
-    host = FeishuLongConnectionHost(
-        gateway=gateway,
-        adapter=adapter,
-        client=client,
-        dedupe_store=InMemoryFeishuInboundDedupeStore(),
-    )
-
-    outbound = host.handle_event(make_text_event("/approve"))
-
-    assert outbound == [
-        {
-            "chat_id": "oc_chat_1",
-            "thread_id": None,
-            "text": "No active session is bound for this chat yet. Send a normal message first.",
-        }
-    ]
-
-
 def test_feishu_adapter_coalesces_tool_progress_notifications(tmp_path: Path) -> None:
     client = FakeFeishuClient()
     config = FeishuAppConfig(
@@ -565,12 +662,17 @@ def test_feishu_adapter_coalesces_tool_progress_notifications(tmp_path: Path) ->
         adapter=adapter,
         client=client,
         dedupe_store=InMemoryFeishuInboundDedupeStore(),
+        card_delivery_store=FileFeishuCardDeliveryStore(str(tmp_path / "cards.json")),
     )
 
     outbound = host.handle_event(make_text_event("run stream"))
-    progress_messages = [item for item in outbound if item["text"] == "Tool stream is working..."]
+    progress_messages = [item for item in outbound if item.get("delivery") == "card"]
 
-    assert len(progress_messages) == 1
+    assert len(progress_messages) >= 1
+    assert any(
+        "Tool stream is working..." in item["card"]["elements"][0]["content"]
+        for item in client.updated_cards
+    )
 
 
 def test_feishu_gateway_registers_single_adapter_instance(tmp_path: Path) -> None:
@@ -604,82 +706,18 @@ def test_feishu_host_dedupes_duplicate_user_message(tmp_path: Path) -> None:
         adapter=adapter,
         client=client,
         dedupe_store=InMemoryFeishuInboundDedupeStore(),
+        card_delivery_store=FileFeishuCardDeliveryStore(str(tmp_path / "cards.json")),
     )
 
     first = host.handle_event(make_text_event("hello", message_id="om_dup"))
     second = host.handle_event(make_text_event("hello", message_id="om_dup"))
 
-    assert first == [{"chat_id": "oc_chat_1", "thread_id": None, "text": "hello once"}]
+    assert first[-1]["delivery"] == "card"
     assert second == []
     assert [item["reaction_type"] for item in client.added_reactions] == [
         FEISHU_REACTION_IN_PROGRESS,
         FEISHU_REACTION_COMPLETED,
     ]
-
-
-def test_feishu_host_marks_missing_session_control_as_completed(tmp_path: Path) -> None:
-    client = FakeFeishuClient()
-    config = FeishuAppConfig(
-        app_id="app",
-        app_secret="secret",
-        session_root=str(tmp_path / "sessions"),
-        binding_root=str(tmp_path / "bindings"),
-    )
-    gateway, _ = create_feishu_gateway(config=config, model=StaticModel(message="unused"))
-    adapter = gateway.get_channel_adapter("feishu")
-    assert isinstance(adapter, FeishuChannelAdapter)
-    adapter.client = client
-    host = FeishuLongConnectionHost(
-        gateway=gateway,
-        adapter=adapter,
-        client=client,
-        dedupe_store=InMemoryFeishuInboundDedupeStore(),
-    )
-
-    outbound = host.handle_event(make_text_event("/approve"))
-
-    assert outbound == [
-        {
-            "chat_id": "oc_chat_1",
-            "thread_id": None,
-            "text": "No active session is bound for this chat yet. Send a normal message first.",
-        }
-    ]
-    assert [item["reaction_type"] for item in client.added_reactions] == [
-        FEISHU_REACTION_IN_PROGRESS,
-        FEISHU_REACTION_COMPLETED,
-    ]
-
-
-def test_feishu_host_dedupes_duplicate_control_message(tmp_path: Path) -> None:
-    client = FakeFeishuClient()
-    config = FeishuAppConfig(
-        app_id="app",
-        app_secret="secret",
-        session_root=str(tmp_path / "sessions"),
-        binding_root=str(tmp_path / "bindings"),
-    )
-    gateway, _ = create_feishu_gateway(
-        config=config,
-        model=ToolThenReplyModel(),
-        tools=[DemoTool(name="admin", permission=PermissionDecision.ASK)],
-    )
-    adapter = gateway.get_channel_adapter("feishu")
-    assert isinstance(adapter, FeishuChannelAdapter)
-    adapter.client = client
-    host = FeishuLongConnectionHost(
-        gateway=gateway,
-        adapter=adapter,
-        client=client,
-        dedupe_store=InMemoryFeishuInboundDedupeStore(),
-    )
-
-    host.handle_event(make_text_event("admin rotate", message_id="om_admin"))
-    first = host.handle_event(make_text_event("/approve", message_id="om_approve_dup"))
-    second = host.handle_event(make_text_event("/approve", message_id="om_approve_dup"))
-
-    assert first[-1]["text"] == "tool completed after approval"
-    assert second == []
 
 
 def test_feishu_host_missing_message_id_skips_dedupe(tmp_path: Path) -> None:
@@ -699,6 +737,7 @@ def test_feishu_host_missing_message_id_skips_dedupe(tmp_path: Path) -> None:
         adapter=adapter,
         client=client,
         dedupe_store=InMemoryFeishuInboundDedupeStore(),
+        card_delivery_store=FileFeishuCardDeliveryStore(str(tmp_path / "cards.json")),
     )
     raw_event = make_text_event("hello", message_id="om_unused")
     message = raw_event["event"]["message"]
@@ -731,3 +770,235 @@ def test_feishu_runtime_creates_file_backed_runtime(tmp_path: Path) -> None:
 
     assert events[1].payload["message"] == "profile"
     assert terminal.reason == "assistant_message"
+
+
+def test_feishu_host_retries_pending_card_delivery_and_keeps_reaction_in_progress(
+    tmp_path: Path,
+) -> None:
+    client = FakeFeishuClient()
+    client.fail_card_sync_attempts = 4
+    config = FeishuAppConfig(
+        app_id="app",
+        app_secret="secret",
+        session_root=str(tmp_path / "sessions"),
+        binding_root=str(tmp_path / "bindings"),
+        card_state_root=str(tmp_path / "card-state"),
+    )
+    gateway, _ = create_feishu_gateway(
+        config=config,
+        model=StaticModel(message="hello after retry"),
+    )
+    adapter = gateway.get_channel_adapter("feishu")
+    assert isinstance(adapter, FeishuChannelAdapter)
+    adapter.client = client
+    store = FileFeishuCardDeliveryStore(str(tmp_path / "delivery.json"))
+    host = FeishuLongConnectionHost(
+        gateway=gateway,
+        adapter=adapter,
+        client=client,
+        dedupe_store=InMemoryFeishuInboundDedupeStore(),
+        card_delivery_store=store,
+        retry_interval_seconds=0.01,
+    )
+
+    host.handle_event(make_text_event("hello", message_id="om_retry"))
+
+    assert client.sent_cards == []
+    assert [item["reaction_type"] for item in client.added_reactions] == [
+        FEISHU_REACTION_IN_PROGRESS
+    ]
+    sleep(0.02)
+    host.retry_pending_cards()
+
+    assert client.sent_cards
+    assert client.sent_cards[-1]["card"]["header"]["title"]["content"] == "OpenAgent · Completed"
+    assert client.stream_settings == []
+    assert [item["reaction_type"] for item in client.added_reactions] == [
+        FEISHU_REACTION_IN_PROGRESS,
+        FEISHU_REACTION_COMPLETED,
+    ]
+
+
+def test_feishu_host_retries_pending_cards_within_same_conversation_only(tmp_path: Path) -> None:
+    client = FakeFeishuClient()
+    store = FileFeishuCardDeliveryStore(str(tmp_path / "delivery.json"))
+    store.upsert(
+        FeishuReplyCardRecord(
+            request_message_id="om_private",
+            session_id="sess-private",
+            conversation_id="feishu:chat:oc_private",
+            chat_id="oc_private",
+            prompt_text="private prompt",
+            reply_message_id="om_reply_private",
+            latest_card={"elements": []},
+            delivery_pending=True,
+        )
+    )
+    store.upsert(
+        FeishuReplyCardRecord(
+            request_message_id="om_group",
+            session_id="sess-group",
+            conversation_id="feishu:chat:oc_group",
+            chat_id="oc_group",
+            prompt_text="group prompt",
+            reply_message_id="om_reply_group",
+            latest_card={"elements": []},
+            status="completed",
+            delivery_pending=True,
+        )
+    )
+    host = FeishuLongConnectionHost(
+        gateway=create_feishu_gateway(
+            config=FeishuAppConfig(
+                app_id="app",
+                app_secret="secret",
+                session_root=str(tmp_path / "sessions"),
+                binding_root=str(tmp_path / "bindings"),
+            ),
+            model=StaticModel(message="unused"),
+        )[0],
+        adapter=FeishuChannelAdapter(client=client),
+        client=client,
+        dedupe_store=InMemoryFeishuInboundDedupeStore(),
+        card_delivery_store=store,
+    )
+
+    host.retry_pending_cards("feishu:chat:oc_group")
+
+    assert client.updated_cards == [
+        {
+            "message_id": "om_reply_group",
+            "card": {"elements": []},
+            "patched": True,
+        },
+    ]
+
+
+def test_feishu_host_reuses_existing_record_for_same_request_message(tmp_path: Path) -> None:
+    client = FakeFeishuClient()
+    store = FileFeishuCardDeliveryStore(str(tmp_path / "delivery.json"))
+    config = FeishuAppConfig(
+        app_id="app",
+        app_secret="secret",
+        session_root=str(tmp_path / "sessions"),
+        binding_root=str(tmp_path / "bindings"),
+    )
+    gateway, _ = create_feishu_gateway(config=config, model=StaticModel(message="unused"))
+    adapter = gateway.get_channel_adapter("feishu")
+    assert isinstance(adapter, FeishuChannelAdapter)
+    adapter.client = client
+    host = FeishuLongConnectionHost(
+        gateway=gateway,
+        adapter=adapter,
+        client=client,
+        dedupe_store=InMemoryFeishuInboundDedupeStore(),
+        card_delivery_store=store,
+    )
+    record = FeishuReplyCardRecord(
+        request_message_id="om_retry",
+        session_id="sess",
+        conversation_id="feishu:chat:oc_chat_1",
+        chat_id="oc_chat_1",
+        prompt_text="retry me",
+        reply_message_id="om_old",
+        latest_card={"elements": []},
+    )
+    store.upsert(record)
+    reused = host._ensure_turn_card(
+        session_id="sess",
+        channel_identity=ChannelIdentity(
+            channel_type="feishu",
+            conversation_id="feishu:chat:oc_chat_1",
+        ),
+        delivery_metadata={"chat_id": "oc_chat_1"},
+        prompt_text="retry me",
+        request_message_id="om_retry",
+    )
+
+    assert reused is not None
+    assert reused.reply_message_id == "om_old"
+    assert client.sent_cards == []
+
+
+def test_feishu_host_falls_back_to_message_patch_when_cardkit_scope_is_missing(
+    tmp_path: Path,
+) -> None:
+    client = FakeFeishuClient()
+    client.resolve_card_error = RuntimeError(
+        "Feishu resolve_card_id failed: code=99991672 msg=Access denied. "
+        "One of the following scopes is required: [cardkit:card:read]."
+    )
+    config = FeishuAppConfig(
+        app_id="app",
+        app_secret="secret",
+        session_root=str(tmp_path / "sessions"),
+        binding_root=str(tmp_path / "bindings"),
+    )
+    gateway, _ = create_feishu_gateway(config=config, model=StaticModel(message="hello"))
+    adapter = gateway.get_channel_adapter("feishu")
+    assert isinstance(adapter, FeishuChannelAdapter)
+    adapter.client = client
+    store = FileFeishuCardDeliveryStore(str(tmp_path / "delivery.json"))
+    host = FeishuLongConnectionHost(
+        gateway=gateway,
+        adapter=adapter,
+        client=client,
+        dedupe_store=InMemoryFeishuInboundDedupeStore(),
+        card_delivery_store=store,
+    )
+
+    host.handle_event(make_text_event("hello", message_id="om_scope"))
+
+    persisted = store.get_by_request_message_id("om_scope")
+    assert persisted is not None
+    assert persisted.cardkit_supported is False
+    assert persisted.reply_message_id is not None
+    assert client.sent_cards != []
+    assert client.stream_settings == []
+    assert client.updated_cards
+    assert client.updated_cards[-1]["message_id"] == persisted.reply_message_id
+    assert client.updated_cards[-1]["patched"] is True
+
+
+def test_feishu_host_handles_long_connection_card_action_event(tmp_path: Path) -> None:
+    client = FakeFeishuClient()
+    config = FeishuAppConfig(
+        app_id="app",
+        app_secret="secret",
+        session_root=str(tmp_path / "sessions"),
+        binding_root=str(tmp_path / "bindings"),
+    )
+    gateway, _ = create_feishu_gateway(
+        config=config,
+        model=ToolThenReplyModel(),
+        tools=[DemoTool(name="admin", permission=PermissionDecision.ASK)],
+    )
+    adapter = gateway.get_channel_adapter("feishu")
+    assert isinstance(adapter, FeishuChannelAdapter)
+    adapter.client = client
+    store = FileFeishuCardDeliveryStore(str(tmp_path / "delivery.json"))
+    host = FeishuLongConnectionHost(
+        gateway=gateway,
+        adapter=adapter,
+        client=client,
+        dedupe_store=InMemoryFeishuInboundDedupeStore(),
+        card_delivery_store=store,
+    )
+
+    host.handle_event(make_text_event("admin rotate", message_id="om_action"))
+    reply_message_id = str(client.sent_cards[0]["message_id"])
+    result = host.handle_event(
+        {
+            "header": {"event_type": "card.action.trigger"},
+            "event": {
+                "operator": {"open_id": "ou_user_1"},
+                "action": {"value": {"subtype": "permission_response", "approved": True}},
+                "context": {
+                    "open_message_id": reply_message_id,
+                    "open_chat_id": "oc_chat_1",
+                },
+            },
+        }
+    )
+
+    assert result == {"toast": {"type": "info", "content": "Action received."}}

@@ -269,6 +269,10 @@ class OpenAgentHost:
             str(Path("/tmp") / "openagent-feishu-locks"),
         )
         mention_required = os.getenv("OPENAGENT_FEISHU_GROUP_AT_ONLY", "true").lower() != "false"
+        card_state_root = os.getenv(
+            "OPENAGENT_FEISHU_CARD_STATE_ROOT",
+            str(Path(session_root) / "cards"),
+        )
         return FeishuAppConfig(
             app_id=app_id,
             app_secret=app_secret,
@@ -277,6 +281,7 @@ class OpenAgentHost:
             workspace_root=self.config.workspace_root,
             lock_root=lock_root,
             mention_required_in_group=mention_required,
+            card_state_root=card_state_root,
         )
 
     def _management_response(
