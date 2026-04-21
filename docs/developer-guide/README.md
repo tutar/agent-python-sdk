@@ -35,6 +35,10 @@
   - `wechatbot-sdk` 私聊通道接入方式
   - `/channel wechat` 运行时加载
   - allowlist、session binding 和代码地图
+- [WeCom Private Chat Channel](./wecom-private-chat.md)
+  - 企业微信 AI Bot WebSocket 接入方式
+  - 只依赖 `aiohttp/httpx`，不引入第三方 WeCom SDK
+  - `/channel wecom`、allowlist、session binding 和代码地图
 - [Firecrawl Local Testing](./firecrawl-local-testing.md)
   - `WebFetch / WebSearch` 的 Firecrawl backend 本地联调
   - Docker Compose 启动方式

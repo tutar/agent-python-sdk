@@ -14,8 +14,11 @@ from openagent.gateway import (
     TerminalChannelAdapter,
     WechatAppConfig,
     WechatChannelAdapter,
+    WeComAppConfig,
+    WeComChannelAdapter,
     create_feishu_host,
     create_wechat_host,
+    create_wecom_host,
 )
 from openagent.gateway.channels.tui import _TerminalConnectionHandler, _ThreadingTCPServer
 from openagent.harness import ModelProviderAdapter
@@ -53,7 +56,12 @@ class OpenAgentHost:
             binding_root=self.config.binding_root,
         )
         self._loaded_channels: set[str] = set()
-        self._available_channels: tuple[str, ...] = ("terminal", "feishu", "wechat")
+        self._available_channels: tuple[str, ...] = (
+            "terminal",
+            "feishu",
+            "wechat",
+            "wecom",
+        )
         self._channel_runtime_config: dict[str, dict[str, str]] = {}
         self._lock = threading.Lock()
         self._terminal_server: _ThreadingTCPServer | None = None
@@ -91,6 +99,10 @@ class OpenAgentHost:
                 self._load_wechat_channel()
                 self._loaded_channels.add(channel)
                 return
+            if channel == "wecom":
+                self._load_wecom_channel()
+                self._loaded_channels.add(channel)
+                return
             raise ValueError(f"Unsupported channel: {channel}")
 
     def describe_channels(self) -> JsonObject:
@@ -102,6 +114,10 @@ class OpenAgentHost:
             "/channel-config wechat base_url <value>",
             "/channel-config wechat cred_path <value>",
             "/channel-config wechat allowed_senders <comma-separated>",
+            "/channel-config wecom bot_id <value>",
+            "/channel-config wecom secret <value>",
+            "/channel-config wecom ws_url <value>",
+            "/channel-config wecom allowed_users <comma-separated>",
         ]
         return {
             "loaded": cast(list[JsonValue], sorted(self._loaded_channels)),
@@ -122,6 +138,9 @@ class OpenAgentHost:
         elif channel == "wechat":
             if key not in {"base_url", "cred_path", "allowed_senders"}:
                 return {"type": "error", "message": f"unsupported wechat config key: {key}"}
+        elif channel == "wecom":
+            if key not in {"bot_id", "secret", "ws_url", "allowed_users"}:
+                return {"type": "error", "message": f"unsupported wecom config key: {key}"}
         else:
             return {"type": "error", "message": f"unsupported channel config target: {channel}"}
         self._channel_runtime_config.setdefault(channel, {})[key] = value
@@ -155,7 +174,11 @@ class OpenAgentHost:
                         "/channel-config feishu app_secret <value> | "
                         "/channel-config wechat base_url <value> | "
                         "/channel-config wechat cred_path <value> | "
-                        "/channel-config wechat allowed_senders <comma-separated>",
+                        "/channel-config wechat allowed_senders <comma-separated> | "
+                        "/channel-config wecom bot_id <value> | "
+                        "/channel-config wecom secret <value> | "
+                        "/channel-config wecom ws_url <value> | "
+                        "/channel-config wecom allowed_users <comma-separated>",
                     )
                 ]
             _, channel_name, key, value = parts
@@ -243,6 +266,25 @@ class OpenAgentHost:
         thread.start()
         self._channel_threads.append(thread)
 
+    def _load_wecom_channel(self) -> None:
+        config = self._resolve_wecom_config()
+        try:
+            self.gateway.get_channel_adapter("wecom")
+        except KeyError:
+            self.gateway.register_channel(WeComChannelAdapter())
+        host = create_wecom_host(
+            self.gateway,
+            config,
+            management_handler=self.handle_management_command,
+        )
+        thread = threading.Thread(
+            target=host.run,
+            name="openagent-wecom-host",
+            daemon=True,
+        )
+        thread.start()
+        self._channel_threads.append(thread)
+
     def _default_tools(self) -> list[ToolDefinition]:
         tools = cast(
             list[ToolDefinition],
@@ -278,6 +320,21 @@ class OpenAgentHost:
                 return self._management_response("status", "wechat channel is already loaded")
             self.ensure_channel_loaded("wechat")
             return self._management_response("status", "wechat channel loaded")
+        if channel == "wecom":
+            if "wecom" in self._loaded_channels:
+                return self._management_response("status", "wecom channel is already loaded")
+            missing = self._missing_wecom_config_fields()
+            if missing:
+                return self._management_response(
+                    "error",
+                    "wecom config missing: "
+                    + ", ".join(missing)
+                    + " | use /channel-config wecom bot_id <value> and "
+                    "/channel-config wecom secret <value>",
+                    missing_fields=cast(JsonValue, missing),
+                )
+            self.ensure_channel_loaded("wecom")
+            return self._management_response("status", "wecom channel loaded")
         return self._management_response("error", f"unsupported channel: {channel}")
 
     def _missing_feishu_config_fields(self) -> list[str]:
@@ -362,6 +419,54 @@ class OpenAgentHost:
                 sender.strip()
                 for sender in allowed_senders_value.split(",")
                 if sender.strip()
+            ),
+            workspace_root=self.config.workspace_root,
+        )
+
+    def _missing_wecom_config_fields(self) -> list[str]:
+        runtime_config = self._channel_runtime_config.get("wecom", {})
+        missing: list[str] = []
+        if not (runtime_config.get("bot_id") or os.getenv("OPENAGENT_WECOM_BOT_ID")):
+            missing.append("bot_id")
+        if not (runtime_config.get("secret") or os.getenv("OPENAGENT_WECOM_SECRET")):
+            missing.append("secret")
+        return missing
+
+    def _resolve_wecom_config(self) -> WeComAppConfig:
+        runtime_config = self._channel_runtime_config.get("wecom", {})
+        bot_id = runtime_config.get("bot_id") or os.getenv("OPENAGENT_WECOM_BOT_ID")
+        secret = runtime_config.get("secret") or os.getenv("OPENAGENT_WECOM_SECRET")
+        if not bot_id:
+            raise RuntimeError("OPENAGENT_WECOM_BOT_ID is required")
+        if not secret:
+            raise RuntimeError("OPENAGENT_WECOM_SECRET is required")
+        session_root = os.getenv(
+            "OPENAGENT_SESSION_ROOT",
+            str(Path(".openagent") / "wecom" / "sessions"),
+        )
+        binding_root = os.getenv(
+            "OPENAGENT_BINDING_ROOT",
+            str(Path(session_root) / "bindings"),
+        )
+        allowed_users_value = cast(
+            str,
+            runtime_config.get("allowed_users")
+            or os.getenv("OPENAGENT_WECOM_ALLOWED_USERS", ""),
+        )
+        ping_interval = float(os.getenv("OPENAGENT_WECOM_PING_INTERVAL_SECONDS", "30"))
+        ws_url = runtime_config.get("ws_url") or os.getenv(
+            "OPENAGENT_WECOM_WS_URL",
+            "wss://openws.work.weixin.qq.com",
+        )
+        return WeComAppConfig(
+            bot_id=bot_id,
+            secret=secret,
+            ws_url=cast(str, ws_url),
+            ping_interval_seconds=ping_interval,
+            session_root=session_root,
+            binding_root=binding_root,
+            allowed_users=tuple(
+                user.strip() for user in allowed_users_value.split(",") if user.strip()
             ),
             workspace_root=self.config.workspace_root,
         )

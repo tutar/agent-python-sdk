@@ -27,10 +27,11 @@ def test_channel_command_lists_loaded_available_and_usage(tmp_path: Path) -> Non
     response = responses[0]
     assert response["type"] == "status"
     assert response["loaded"] == []
-    assert response["available"] == ["terminal", "feishu", "wechat"]
+    assert response["available"] == ["terminal", "feishu", "wechat", "wecom"]
     usage = cast(list[JsonValue], response["usage"])
     assert "/channel-config feishu app_id <value>" in usage
     assert "/channel-config wechat allowed_senders <comma-separated>" in usage
+    assert "/channel-config wecom allowed_users <comma-separated>" in usage
 
 
 def test_channel_feishu_reports_missing_config(
@@ -95,3 +96,46 @@ def test_channel_config_and_load_wechat_are_process_local(
     assert loaded[0]["message"] == "wechat channel loaded"
     loaded_channels = cast(list[JsonValue], host.describe_channels()["loaded"])
     assert "wechat" in loaded_channels
+
+
+def test_channel_wecom_reports_missing_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("OPENAGENT_WECOM_BOT_ID", raising=False)
+    monkeypatch.delenv("OPENAGENT_WECOM_SECRET", raising=False)
+    host = build_host(tmp_path)
+
+    responses = host.handle_management_command("/channel wecom")
+
+    assert len(responses) == 1
+    response = responses[0]
+    assert response["type"] == "error"
+    assert response["missing_fields"] == ["bot_id", "secret"]
+
+
+def test_channel_config_and_load_wecom_are_process_local(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    host = build_host(tmp_path)
+    monkeypatch.setattr(host, "_load_wecom_channel", lambda: None)
+
+    store_bot = host.handle_management_command("/channel-config wecom bot_id bot_1")
+    store_secret = host.handle_management_command("/channel-config wecom secret secret_1")
+    store_ws_url = host.handle_management_command(
+        "/channel-config wecom ws_url wss://example.test"
+    )
+    store_allowed = host.handle_management_command(
+        "/channel-config wecom allowed_users userid_1,userid_2"
+    )
+    loaded = host.handle_management_command("/channel wecom")
+
+    assert store_bot[0]["type"] == "status"
+    assert store_secret[0]["type"] == "status"
+    assert store_ws_url[0]["type"] == "status"
+    assert store_allowed[0]["type"] == "status"
+    assert loaded[0]["type"] == "status"
+    assert loaded[0]["message"] == "wecom channel loaded"
+    loaded_channels = cast(list[JsonValue], host.describe_channels()["loaded"])
+    assert "wecom" in loaded_channels
