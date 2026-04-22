@@ -2,308 +2,462 @@
 
 from __future__ import annotations
 
-import json
+import builtins
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import cast
 
-from openagent.harness.task.models import BackgroundTaskHandle, LocalTaskKind
-from openagent.object_model import JsonObject, TaskRecord, TerminalStatus
+from openagent.harness.task.interfaces import TaskManager
+from openagent.harness.task.models import (
+    BackgroundTaskHandle,
+    LocalTaskKind,
+    TaskEventSlice,
+    TaskOutputSlice,
+    TaskRetentionPolicy,
+    TaskSelector,
+    VerificationRequest,
+    VerificationResult,
+    VerifierTaskHandle,
+)
+from openagent.harness.task.registry import (
+    TaskImplementation,
+    TaskImplementationRegistry,
+    TaskRegistry,
+)
+from openagent.harness.task.storage import FileTaskStorage, InMemoryTaskStorage
+from openagent.object_model import (
+    JsonObject,
+    JsonValue,
+    TaskEvent,
+    TaskRecord,
+    TerminalState,
+    TerminalStatus,
+)
 
 
-class InMemoryTaskManager:
+def _iso_now() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+class _TaskManagerBase(TaskManager):
+    """Shared task lifecycle implementation for in-memory and file-backed managers."""
+
+    def __init__(self, registry: TaskRegistry) -> None:
+        self.registry = registry
+        self.implementations = TaskImplementationRegistry()
+        self._verification_results: dict[str, VerificationResult] = {}
+
+    def spawn(
+        self,
+        *,
+        task_type: str,
+        description: str,
+        metadata: JsonObject | None = None,
+        session_id: str | None = None,
+        agent_id: str | None = None,
+        parent_task_id: str | None = None,
+    ) -> TaskRecord:
+        task = TaskRecord(
+            task_id=self.registry.next_task_id(),
+            type=task_type,
+            status=TerminalStatus.PENDING,
+            description=description,
+            start_time=_iso_now(),
+            session_id=session_id,
+            agent_id=agent_id,
+            parent_task_id=parent_task_id,
+            metadata=metadata,
+        )
+        self.register(task)
+        self.update(task.task_id, status=TerminalStatus.RUNNING.value)
+        self.append_event(
+            task.task_id,
+            TaskEvent(
+                task_id=task.task_id,
+                event_id=f"task_started:{task.task_id}:1",
+                timestamp=_iso_now(),
+                type="started",
+                payload={"description": description, **(metadata or {})},
+            ),
+        )
+        return self.get(task.task_id)
+
+    def register(self, task: TaskRecord) -> TaskRecord:
+        return self.registry.register(task)
+
+    def append_event(self, task_id: str, event: TaskEvent) -> TaskEvent:
+        return self.registry.append_event(task_id, event)
+
+    def append_output(self, task_id: str, item: JsonValue) -> int:
+        return self.registry.append_output(task_id, item)
+
+    def update(
+        self,
+        task_id: str,
+        *,
+        status: str | None = None,
+        metadata: JsonObject | None = None,
+        output_ref: str | None = None,
+        output_cursor: int | str | None = None,
+        terminal_state: TerminalState | JsonObject | None = None,
+        notified: bool | None = None,
+        end_time: str | None = None,
+    ) -> TaskRecord:
+        return self.registry.update(
+            task_id,
+            status=status,
+            metadata=metadata,
+            output_ref=output_ref,
+            output_cursor=output_cursor,
+            terminal_state=terminal_state,
+            notified=notified,
+            end_time=end_time,
+        )
+
+    def attach_output(self, task_id: str, output_ref: str) -> TaskRecord:
+        return self.registry.attach_output(task_id, output_ref)
+
+    def kill(self, task_id: str) -> TaskRecord:
+        record = self.get(task_id)
+        impl = self.implementations.get(task_id, record.type)
+        if impl is not None and impl.kill_task is not None:
+            return impl.kill_task(task_id)
+        terminal_state = TerminalState(status=TerminalStatus.KILLED, reason="killed")
+        updated = self.update(
+            task_id,
+            status=TerminalStatus.KILLED.value,
+            terminal_state=terminal_state,
+        )
+        self.append_event(
+            task_id,
+            TaskEvent(
+                task_id=task_id,
+                event_id=f"task_killed:{task_id}:{self.read_events(task_id).cursor + 1}",
+                timestamp=_iso_now(),
+                type="killed",
+                payload={"reason": "killed"},
+                terminal_state=terminal_state.to_dict(),
+            ),
+        )
+        return updated
+
+    def list(self, selector: TaskSelector | None = None) -> builtins.list[TaskRecord]:
+        return self.registry.list(selector)
+
+    def get(self, task_id: str) -> TaskRecord:
+        return self.registry.get(task_id)
+
+    def read_output(self, task_id: str, cursor: int = 0) -> TaskOutputSlice:
+        record = self.get(task_id)
+        impl = self.implementations.get(task_id, record.type)
+        if impl is not None and impl.read_output is not None:
+            return impl.read_output(task_id, cursor)
+        return self.registry.read_output(task_id, cursor)
+
+    def read_events(self, task_id: str, cursor: int = 0) -> TaskEventSlice:
+        record = self.get(task_id)
+        impl = self.implementations.get(task_id, record.type)
+        if impl is not None and impl.read_events is not None:
+            return impl.read_events(task_id, cursor)
+        return self.registry.read_events(task_id, cursor)
+
+    def await_task(self, task_id: str, timeout: float | None = None) -> TaskRecord:
+        record = self.get(task_id)
+        impl = self.implementations.get(task_id, record.type)
+        if impl is not None and impl.await_task is not None:
+            return impl.await_task(task_id, timeout)
+        return self.get(task_id)
+
+    def attach_observer(self, task_id: str, binding_id: str) -> None:
+        self.registry.attach_observer(task_id, binding_id)
+
+    def detach_observer(self, task_id: str, binding_id: str) -> None:
+        self.registry.detach_observer(task_id, binding_id)
+
+    def mark_notified(self, task_id: str) -> TaskRecord:
+        return self.registry.mark_notified(task_id)
+
+    def evict_expired(self, *, now_timestamp: str | None = None) -> builtins.list[str]:
+        removed = self.registry.evict_expired(now_timestamp=now_timestamp)
+        for task_id in removed:
+            self.implementations.remove(task_id)
+            self._verification_results.pop(task_id, None)
+        return removed
+
+    def register_implementation(self, task_id: str, implementation: TaskImplementation) -> None:
+        self.implementations.register_task(task_id, implementation)
+
+    def create_task(self, description: str, metadata: JsonObject | None = None) -> TaskRecord:
+        record = self.spawn(
+            task_type=LocalTaskKind.GENERIC.value,
+            description=description,
+            metadata=metadata,
+        )
+        terminal_state = TerminalState(status=TerminalStatus.COMPLETED, reason="completed")
+        self.update(
+            record.task_id,
+            status=TerminalStatus.COMPLETED.value,
+            terminal_state=terminal_state,
+        )
+        return self.get(record.task_id)
+
+    def update_task(
+        self,
+        task_id: str,
+        status: str,
+        metadata: JsonObject | None = None,
+    ) -> None:
+        self.update(task_id, status=status, metadata=metadata)
+
+    def checkpoint_task(self, task_id: str, checkpoint: JsonObject) -> None:
+        self.append_event(
+            task_id,
+            TaskEvent(
+                task_id=task_id,
+                event_id=f"task_progress:{task_id}:{self.read_events(task_id).cursor + 1}",
+                timestamp=_iso_now(),
+                type="progress",
+                payload=checkpoint,
+            ),
+        )
+
+    def complete_task(
+        self,
+        task_id: str,
+        output_ref: str | None = None,
+        metadata: JsonObject | None = None,
+    ) -> None:
+        if output_ref is not None:
+            self.attach_output(task_id, output_ref)
+        terminal_state = TerminalState(status=TerminalStatus.COMPLETED, reason="completed")
+        self.update(
+            task_id,
+            status=TerminalStatus.COMPLETED.value,
+            metadata=metadata,
+            output_ref=output_ref,
+            terminal_state=terminal_state,
+        )
+        self.append_event(
+            task_id,
+            TaskEvent(
+                task_id=task_id,
+                event_id=f"task_completed:{task_id}:{self.read_events(task_id).cursor + 1}",
+                timestamp=_iso_now(),
+                type="completed",
+                payload=cast(JsonObject, {"output_ref": output_ref, **(metadata or {})}),
+                terminal_state=terminal_state.to_dict(),
+            ),
+        )
+
+    def fail_task(
+        self,
+        task_id: str,
+        reason: str,
+        metadata: JsonObject | None = None,
+    ) -> None:
+        merged = {"reason": reason, **(metadata or {})}
+        terminal_state = TerminalState(status=TerminalStatus.FAILED, reason=reason)
+        self.update(
+            task_id,
+            status=TerminalStatus.FAILED.value,
+            metadata=merged,
+            terminal_state=terminal_state,
+        )
+        self.append_event(
+            task_id,
+            TaskEvent(
+                task_id=task_id,
+                event_id=f"task_failed:{task_id}:{self.read_events(task_id).cursor + 1}",
+                timestamp=_iso_now(),
+                type="failed",
+                payload=merged,
+                terminal_state=terminal_state.to_dict(),
+                error={"reason": reason},
+            ),
+        )
+
+    def get_task(self, task_id: str) -> TaskRecord:
+        return self.get(task_id)
+
+    def list_tasks(self) -> builtins.list[TaskRecord]:
+        return self.list()
+
+    def get_handle(self, task_id: str) -> BackgroundTaskHandle:
+        record = self.get(task_id)
+        events = self.read_events(task_id).events
+        checkpoints: list[JsonObject] = []
+        for event in events:
+            payload = event.get("payload")
+            if event.get("type") == "progress" and isinstance(payload, dict):
+                checkpoints.append(dict(payload))
+        task_kind = (
+            LocalTaskKind(record.type)
+            if record.type in {item.value for item in LocalTaskKind}
+            else LocalTaskKind.GENERIC
+        )
+        return BackgroundTaskHandle(
+            task_id=record.task_id,
+            task_kind=task_kind,
+            description=record.description,
+            detached=bool(
+                (record.metadata or {}).get("detached", task_kind is LocalTaskKind.BACKGROUND)
+            ),
+            session_id=record.session_id,
+            agent_id=record.agent_id,
+            status=str(record.status),
+            output_ref=record.output_ref,
+            checkpoints=checkpoints,
+        )
+
+    def create_background_task(
+        self,
+        description: str,
+        metadata: JsonObject | None = None,
+        detached: bool = True,
+        session_id: str | None = None,
+        agent_id: str | None = None,
+        parent_task_id: str | None = None,
+    ) -> BackgroundTaskHandle:
+        task_metadata = dict(metadata or {})
+        task_metadata["detached"] = detached
+        record = self.spawn(
+            task_type=LocalTaskKind.BACKGROUND.value,
+            description=description,
+            metadata=task_metadata,
+            session_id=session_id,
+            agent_id=agent_id,
+            parent_task_id=parent_task_id,
+        )
+        return BackgroundTaskHandle(
+            task_id=record.task_id,
+            task_kind=LocalTaskKind.BACKGROUND,
+            description=description,
+            detached=detached,
+            session_id=session_id,
+            agent_id=agent_id,
+            status=str(record.status),
+            output_ref=record.output_ref,
+        )
+
+    def create_verifier_task(
+        self,
+        description: str,
+        metadata: JsonObject | None = None,
+        session_id: str | None = None,
+        agent_id: str | None = None,
+        parent_task_id: str | None = None,
+    ) -> VerifierTaskHandle:
+        record = self.spawn(
+            task_type=LocalTaskKind.VERIFIER.value,
+            description=description,
+            metadata=metadata,
+            session_id=session_id,
+            agent_id=agent_id,
+            parent_task_id=parent_task_id,
+        )
+        return VerifierTaskHandle(
+            task_id=record.task_id,
+            description=description,
+            session_id=session_id,
+            agent_id=agent_id,
+            status=str(record.status),
+            output_ref=record.output_ref,
+        )
+
+    def run_verifier(
+        self,
+        request: VerificationRequest,
+        *,
+        detached: bool = False,
+    ) -> VerifierTaskHandle:
+        del detached
+        return self.create_verifier_task(
+            description=request.prompt,
+            metadata=cast(JsonObject, {
+                "target_session": request.target_session,
+                "original_task": request.original_task,
+                "changed_artifacts": cast(list[JsonValue], list(request.changed_artifacts)),
+                "evidence_scope": cast(list[JsonValue], list(request.evidence_scope)),
+                "review_policy": request.review_policy,
+                "source_command_id": request.source_command_id,
+            }),
+            session_id=request.target_session,
+        )
+
+    def complete_verifier(
+        self,
+        task_id: str,
+        result: VerificationResult,
+    ) -> VerificationResult:
+        self._verification_results[task_id] = result
+        self.complete_task(
+            task_id,
+            output_ref=result.output_ref,
+            metadata=cast(JsonObject, {
+                "verdict": result.verdict.value,
+                "summary": result.summary,
+                "evidence": cast(list[JsonValue], list(result.evidence)),
+                "findings": cast(list[JsonValue], list(result.findings)),
+                "limitations": cast(list[JsonValue], list(result.limitations)),
+                **(result.metadata or {}),
+            }),
+        )
+        return result
+
+    def await_verifier(
+        self,
+        handle: VerifierTaskHandle,
+        timeout: float | None = None,
+    ) -> VerificationResult:
+        self.await_task(handle.task_id, timeout)
+        result = self._verification_results.get(handle.task_id)
+        if result is not None:
+            return result
+        record = self.get(handle.task_id)
+        metadata = cast(JsonObject, record.metadata or {})
+        from openagent.harness.task.models import VerificationResult, VerificationVerdict
+
+        verdict_raw = metadata.get("verdict", "partial")
+        try:
+            verdict = VerificationVerdict(str(verdict_raw))
+        except ValueError:
+            verdict = VerificationVerdict.PARTIAL
+        evidence_raw = metadata.get("evidence")
+        findings_raw = metadata.get("findings")
+        limitations_raw = metadata.get("limitations")
+        return VerificationResult(
+            verdict=verdict,
+            summary=str(metadata.get("summary", record.description)),
+            evidence=(
+                [str(item) for item in evidence_raw] if isinstance(evidence_raw, list) else []
+            ),
+            findings=(
+                [str(item) for item in findings_raw] if isinstance(findings_raw, list) else []
+            ),
+            limitations=(
+                [str(item) for item in limitations_raw]
+                if isinstance(limitations_raw, list)
+                else []
+            ),
+            task_id=handle.task_id,
+            output_ref=record.output_ref,
+            metadata=metadata,
+        )
+
+
+class InMemoryTaskManager(_TaskManagerBase):
     """Task manager suitable for local harness task tests."""
 
-    def __init__(self) -> None:
-        self._tasks: dict[str, TaskRecord] = {}
-        self._handles: dict[str, BackgroundTaskHandle] = {}
-        self._counter = 0
-
-    def create_task(self, description: str, metadata: JsonObject | None = None) -> TaskRecord:
-        self._counter += 1
-        task_id = f"task_{self._counter}"
-        record = TaskRecord(
-            task_id=task_id,
-            type=LocalTaskKind.GENERIC.value,
-            status=TerminalStatus.COMPLETED,
-            description=description,
-            start_time=datetime.now(UTC).isoformat(),
-            metadata=metadata,
-        )
-        self._tasks[task_id] = record
-        return record
-
-    def create_background_task(
-        self,
-        description: str,
-        metadata: JsonObject | None = None,
-        detached: bool = True,
-    ) -> BackgroundTaskHandle:
-        record = self._create_running_task(
-            task_kind=LocalTaskKind.BACKGROUND,
-            description=description,
-            metadata=metadata,
-        )
-        handle = BackgroundTaskHandle(
-            task_id=record.task_id,
-            task_kind=LocalTaskKind.BACKGROUND,
-            description=description,
-            detached=detached,
-        )
-        self._handles[record.task_id] = handle
-        return handle
-
-    def create_verifier_task(
-        self,
-        description: str,
-        metadata: JsonObject | None = None,
-    ) -> BackgroundTaskHandle:
-        record = self._create_running_task(
-            task_kind=LocalTaskKind.VERIFIER,
-            description=description,
-            metadata=metadata,
-        )
-        handle = BackgroundTaskHandle(
-            task_id=record.task_id,
-            task_kind=LocalTaskKind.VERIFIER,
-            description=description,
-            detached=False,
-        )
-        self._handles[record.task_id] = handle
-        return handle
-
-    def update_task(
-        self,
-        task_id: str,
-        status: str,
-        metadata: JsonObject | None = None,
-    ) -> None:
-        record = self._tasks[task_id]
-        record.status = status
-        if metadata is not None:
-            record.metadata = metadata
-
-    def checkpoint_task(self, task_id: str, checkpoint: JsonObject) -> None:
-        handle = self._handles[task_id]
-        handle.checkpoints.append(checkpoint)
-
-    def complete_task(
-        self,
-        task_id: str,
-        output_ref: str | None = None,
-        metadata: JsonObject | None = None,
-    ) -> None:
-        record = self._tasks[task_id]
-        record.status = TerminalStatus.COMPLETED
-        record.end_time = datetime.now(UTC).isoformat()
-        record.output_ref = output_ref
-        if metadata is not None:
-            record.metadata = metadata
-
-    def fail_task(
-        self,
-        task_id: str,
-        reason: str,
-        metadata: JsonObject | None = None,
-    ) -> None:
-        record = self._tasks[task_id]
-        record.status = TerminalStatus.FAILED
-        record.end_time = datetime.now(UTC).isoformat()
-        merged_metadata = dict(record.metadata or {})
-        merged_metadata["reason"] = reason
-        if metadata is not None:
-            merged_metadata.update(metadata)
-        record.metadata = merged_metadata
-
-    def get_task(self, task_id: str) -> TaskRecord:
-        return self._tasks[task_id]
-
-    def get_handle(self, task_id: str) -> BackgroundTaskHandle:
-        return self._handles[task_id]
-
-    def list_tasks(self) -> list[TaskRecord]:
-        return [self._tasks[task_id] for task_id in sorted(self._tasks)]
-
-    def _create_running_task(
-        self,
-        task_kind: LocalTaskKind,
-        description: str,
-        metadata: JsonObject | None,
-    ) -> TaskRecord:
-        self._counter += 1
-        task_id = f"task_{self._counter}"
-        record = TaskRecord(
-            task_id=task_id,
-            type=task_kind.value,
-            status="running",
-            description=description,
-            start_time=datetime.now(UTC).isoformat(),
-            metadata=metadata,
-        )
-        self._tasks[task_id] = record
-        return record
+    def __init__(self, retention_policy: TaskRetentionPolicy | None = None) -> None:
+        super().__init__(TaskRegistry(InMemoryTaskStorage(), retention_policy=retention_policy))
 
 
-class FileTaskManager:
+class FileTaskManager(_TaskManagerBase):
     """Persist local tasks and handles for restart-safe background workflows."""
 
-    def __init__(self, root: str | Path) -> None:
-        self._root = Path(root)
-        self._tasks_dir = self._root / "tasks"
-        self._handles_dir = self._root / "handles"
-        self._counter_file = self._root / "counter.txt"
-        self._tasks_dir.mkdir(parents=True, exist_ok=True)
-        self._handles_dir.mkdir(parents=True, exist_ok=True)
-
-    def create_task(self, description: str, metadata: JsonObject | None = None) -> TaskRecord:
-        task_id = self._next_task_id()
-        record = TaskRecord(
-            task_id=task_id,
-            type=LocalTaskKind.GENERIC.value,
-            status=TerminalStatus.COMPLETED,
-            description=description,
-            start_time=datetime.now(UTC).isoformat(),
-            metadata=metadata,
-        )
-        self._write_task(record)
-        return record
-
-    def create_background_task(
+    def __init__(
         self,
-        description: str,
-        metadata: JsonObject | None = None,
-        detached: bool = True,
-    ) -> BackgroundTaskHandle:
-        record = self._create_running_task(LocalTaskKind.BACKGROUND, description, metadata)
-        handle = BackgroundTaskHandle(
-            task_id=record.task_id,
-            task_kind=LocalTaskKind.BACKGROUND,
-            description=description,
-            detached=detached,
-        )
-        self._write_handle(handle)
-        return handle
-
-    def create_verifier_task(
-        self,
-        description: str,
-        metadata: JsonObject | None = None,
-    ) -> BackgroundTaskHandle:
-        record = self._create_running_task(LocalTaskKind.VERIFIER, description, metadata)
-        handle = BackgroundTaskHandle(
-            task_id=record.task_id,
-            task_kind=LocalTaskKind.VERIFIER,
-            description=description,
-            detached=False,
-        )
-        self._write_handle(handle)
-        return handle
-
-    def update_task(
-        self,
-        task_id: str,
-        status: str,
-        metadata: JsonObject | None = None,
+        root: str,
+        retention_policy: TaskRetentionPolicy | None = None,
     ) -> None:
-        record = self.get_task(task_id)
-        record.status = status
-        if metadata is not None:
-            record.metadata = metadata
-        self._write_task(record)
-
-    def checkpoint_task(self, task_id: str, checkpoint: JsonObject) -> None:
-        handle = self.get_handle(task_id)
-        handle.checkpoints.append(checkpoint)
-        self._write_handle(handle)
-
-    def complete_task(
-        self,
-        task_id: str,
-        output_ref: str | None = None,
-        metadata: JsonObject | None = None,
-    ) -> None:
-        record = self.get_task(task_id)
-        record.status = TerminalStatus.COMPLETED
-        record.end_time = datetime.now(UTC).isoformat()
-        record.output_ref = output_ref
-        if metadata is not None:
-            record.metadata = metadata
-        self._write_task(record)
-
-    def fail_task(
-        self,
-        task_id: str,
-        reason: str,
-        metadata: JsonObject | None = None,
-    ) -> None:
-        record = self.get_task(task_id)
-        record.status = TerminalStatus.FAILED
-        record.end_time = datetime.now(UTC).isoformat()
-        merged_metadata = dict(record.metadata or {})
-        merged_metadata["reason"] = reason
-        if metadata is not None:
-            merged_metadata.update(metadata)
-        record.metadata = merged_metadata
-        self._write_task(record)
-
-    def get_task(self, task_id: str) -> TaskRecord:
-        return TaskRecord.from_dict(self._read_json(self._task_path(task_id)))
-
-    def get_handle(self, task_id: str) -> BackgroundTaskHandle:
-        return BackgroundTaskHandle.from_dict(self._read_json(self._handle_path(task_id)))
-
-    def list_tasks(self) -> list[TaskRecord]:
-        records: list[TaskRecord] = []
-        for path in sorted(self._tasks_dir.glob("*.json")):
-            records.append(TaskRecord.from_dict(self._read_json(path)))
-        return records
-
-    def _create_running_task(
-        self,
-        task_kind: LocalTaskKind,
-        description: str,
-        metadata: JsonObject | None,
-    ) -> TaskRecord:
-        task_id = self._next_task_id()
-        record = TaskRecord(
-            task_id=task_id,
-            type=task_kind.value,
-            status="running",
-            description=description,
-            start_time=datetime.now(UTC).isoformat(),
-            metadata=metadata,
-        )
-        self._write_task(record)
-        return record
-
-    def _next_task_id(self) -> str:
-        current = 0
-        if self._counter_file.exists():
-            current = int(self._counter_file.read_text(encoding="utf-8").strip() or "0")
-        current += 1
-        self._counter_file.write_text(str(current), encoding="utf-8")
-        return f"task_{current}"
-
-    def _task_path(self, task_id: str) -> Path:
-        return self._tasks_dir / f"{task_id}.json"
-
-    def _handle_path(self, task_id: str) -> Path:
-        return self._handles_dir / f"{task_id}.json"
-
-    def _write_task(self, record: TaskRecord) -> None:
-        self._task_path(record.task_id).write_text(
-            json.dumps(record.to_dict(), indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
-
-    def _write_handle(self, handle: BackgroundTaskHandle) -> None:
-        self._handle_path(handle.task_id).write_text(
-            json.dumps(handle.to_dict(), indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
-
-    def _read_json(self, path: Path) -> JsonObject:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(payload, dict):
-            raise ValueError(f"Expected JSON object in {path}")
-        return cast(JsonObject, payload)
+        self.root = root
+        super().__init__(TaskRegistry(FileTaskStorage(root), retention_policy=retention_policy))

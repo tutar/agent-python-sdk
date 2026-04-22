@@ -14,6 +14,10 @@ from openagent.harness.task import (
     InMemoryTaskManager,
     LocalBackgroundAgentOrchestrator,
     LocalTaskKind,
+    LocalVerificationRuntime,
+    TaskRetentionPolicy,
+    VerificationRequest,
+    VerificationVerdict,
 )
 from openagent.local import create_file_runtime, create_in_memory_runtime
 from openagent.object_model import JsonObject, TerminalStatus, ToolResult
@@ -23,7 +27,10 @@ from openagent.tools import (
     Command,
     CommandKind,
     CommandVisibility,
+    ReviewCommand,
+    ReviewCommandKind,
     SkillDefinition,
+    StaticCommandRegistry,
 )
 
 
@@ -58,6 +65,7 @@ def test_background_and_verifier_tasks_have_local_lifecycle() -> None:
 
     background_record = manager.get_task(background.task_id)
     verifier_record = manager.get_task(verifier.task_id)
+    background_events = manager.read_events(background.task_id)
 
     assert background.task_kind is LocalTaskKind.BACKGROUND
     assert manager.get_handle(background.task_id).checkpoints == [{"step": "crawl"}]
@@ -66,6 +74,8 @@ def test_background_and_verifier_tasks_have_local_lifecycle() -> None:
     assert verifier_record.type == LocalTaskKind.VERIFIER.value
     assert verifier_record.status is TerminalStatus.FAILED
     assert verifier_record.metadata == {"source": "user", "reason": "lint_failed", "tool": "ruff"}
+    assert background_events.cursor >= 2
+    assert background_events.events[-1]["type"] == "completed"
 
 
 def test_file_task_manager_persists_tasks_and_handles(tmp_path: Path) -> None:
@@ -83,9 +93,11 @@ def test_file_task_manager_persists_tasks_and_handles(tmp_path: Path) -> None:
     verifier_record = recovered.get_task(verifier.task_id)
     background_handle = recovered.get_handle(background.task_id)
     listed_ids = [record.task_id for record in recovered.list_tasks()]
+    output_slice = recovered.read_output(background.task_id)
 
     assert background_handle.checkpoints == [{"step": "crawl"}]
     assert background_record.output_ref == "memory://task/index"
+    assert output_slice.output_ref == "memory://task/index"
     assert background_record.status is TerminalStatus.COMPLETED
     assert verifier_record.status is TerminalStatus.FAILED
     assert verifier_record.metadata == {"source": "user", "reason": "lint_failed", "tool": "ruff"}
@@ -186,7 +198,7 @@ def test_local_background_agent_orchestrator_runs_without_blocking() -> None:
 
     assert handle.task_kind is LocalTaskKind.BACKGROUND
     assert task.task_id == handle.task_id
-    assert events[0].event_type.value == "task_created"
+    assert events[0].event_type.value == "task_started"
 
     for _ in range(20):
         task = orchestrator.get_task(handle.task_id)
@@ -200,6 +212,99 @@ def test_local_background_agent_orchestrator_runs_without_blocking() -> None:
     assert final_events[-1].event_type.value == "task_completed"
     assert final_task.output_ref == "memory://tasks/index"
     assert final_task.status is TerminalStatus.COMPLETED
+
+
+def test_task_output_cursor_and_resume_with_file_manager(tmp_path: Path) -> None:
+    manager = FileTaskManager(str(tmp_path / "tasks"))
+    task = manager.create_background_task("stream output")
+
+    first_cursor = manager.append_output(task.task_id, "first")
+    second_cursor = manager.append_output(task.task_id, "second")
+    manager.complete_task(task.task_id, output_ref=f"memory://tasks/{task.task_id}/output")
+
+    first_slice = manager.read_output(task.task_id)
+    second_slice = manager.read_output(task.task_id, cursor=first_cursor)
+    recovered = FileTaskManager(str(tmp_path / "tasks"))
+    recovered_slice = recovered.read_output(task.task_id, cursor=first_cursor)
+
+    assert first_cursor == 1
+    assert second_cursor == 2
+    assert first_slice.items == ["first", "second"]
+    assert second_slice.items == ["second"]
+    assert recovered_slice.items == ["second"]
+    assert recovered_slice.cursor == 2
+
+
+def test_task_retention_keeps_terminal_task_while_chat_attached(tmp_path: Path) -> None:
+    manager = FileTaskManager(
+        str(tmp_path / "tasks"),
+        retention_policy=TaskRetentionPolicy(grace_period_seconds=1, evict_output_with_state=True),
+    )
+    task = manager.create_background_task("notify me")
+    manager.complete_task(task.task_id, output_ref=f"memory://tasks/{task.task_id}/output")
+    manager.mark_notified(task.task_id)
+    manager.attach_observer(task.task_id, "feishu:chat:p2p_1")
+
+    kept = manager.evict_expired(now_timestamp="2030-01-01T00:00:05+00:00")
+    manager.detach_observer(task.task_id, "feishu:chat:p2p_1")
+    removed = manager.evict_expired(now_timestamp="2030-01-01T00:00:05+00:00")
+
+    assert kept == []
+    assert removed == [task.task_id]
+
+
+def test_local_verification_runtime_registers_review_command() -> None:
+    manager = InMemoryTaskManager()
+    orchestrator = LocalBackgroundAgentOrchestrator(manager)
+    runtime = LocalVerificationRuntime(orchestrator)
+    registry = StaticCommandRegistry()
+    command = ReviewCommand(
+        id="cmd.review",
+        name="review",
+        kind=CommandKind.REVIEW,
+        description="Run verification",
+        visibility=CommandVisibility.BOTH,
+        source="builtin_review",
+        review_kind=ReviewCommandKind.VERIFICATION,
+    )
+    registry.register(command, lambda args: args)
+    runtime.register_verification_command(registry)
+
+    result = registry.invoke_command(
+        "cmd.review",
+        {
+            "target_session": "sess_review",
+            "original_task": "task_patch",
+            "prompt": "Verify the patch",
+            "changed_artifacts": ["src/app.py"],
+        },
+    )
+
+    assert result["kind"] == "verification"
+    assert result["verdict"] == VerificationVerdict.PARTIAL.value
+    assert any("artifact:src/app.py" == item for item in result["evidence"])
+
+
+def test_verifier_task_roundtrip() -> None:
+    manager = InMemoryTaskManager()
+    orchestrator = LocalBackgroundAgentOrchestrator(manager)
+    runtime = LocalVerificationRuntime(orchestrator)
+
+    handle = runtime.spawn_verifier(
+        VerificationRequest(
+            target_session="sess_verify",
+            original_task="task_42",
+            prompt="Verify correctness",
+            changed_artifacts=["src/main.py"],
+        )
+    )
+    result = runtime.await_verifier(handle, timeout=1)
+    task = manager.get(handle.task_id)
+
+    assert result.verdict is VerificationVerdict.PARTIAL
+    assert task.type == LocalTaskKind.VERIFIER.value
+    assert task.status is TerminalStatus.COMPLETED
+    assert task.output_ref is not None
 
 
 def test_context_governance_compacts_and_externalizes(tmp_path: Path) -> None:

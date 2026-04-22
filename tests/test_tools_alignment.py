@@ -235,6 +235,8 @@ def test_review_command_and_builtin_review_surface() -> None:
     assert command.kind is CommandKind.REVIEW
     assert command.review_kind is ReviewCommandKind.VERIFICATION
     assert builtin[0].kind is CommandKind.REVIEW
+    assert isinstance(builtin[0], ReviewCommand)
+    assert builtin[0].review_kind is ReviewCommandKind.VERIFICATION
 
 
 def test_local_runtime_defaults_to_builtin_tool_baseline(tmp_path: Path) -> None:

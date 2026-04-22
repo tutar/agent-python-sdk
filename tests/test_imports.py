@@ -6,6 +6,7 @@ from openagent import (
     RuntimeEvent,
     RuntimeEventType,
     SchemaEnvelope,
+    TaskEvent,
     TaskRecord,
     TerminalState,
     TerminalStatus,
@@ -67,6 +68,13 @@ def test_object_models_support_dict_serialization() -> None:
         description="Run a turn",
         start_time="2026-04-14T00:00:00Z",
     )
+    task_event = TaskEvent(
+        task_id="task_1",
+        event_id="tev_1",
+        timestamp="2026-04-14T00:00:00Z",
+        type="progress",
+        payload={"step": "scan"},
+    )
     envelope = SchemaEnvelope(
         schema_name="RuntimeEvent",
         schema_version="0.1",
@@ -79,4 +87,5 @@ def test_object_models_support_dict_serialization() -> None:
     assert result.to_dict()["tool_name"] == "echo"
     assert capability.to_dict()["tools"] == ["bash"]
     assert task.to_dict()["task_id"] == "task_1"
+    assert task_event.to_dict()["type"] == "progress"
     assert envelope.to_dict()["schema_name"] == "RuntimeEvent"

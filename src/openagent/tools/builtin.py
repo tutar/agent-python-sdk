@@ -13,7 +13,13 @@ from typing import cast
 
 from openagent.object_model import JsonObject, JsonValue, RequiresAction, ToolResult
 from openagent.object_model.base import to_json_value
-from openagent.tools.commands import Command, CommandKind, CommandVisibility
+from openagent.tools.commands import (
+    Command,
+    CommandKind,
+    CommandVisibility,
+    ReviewCommand,
+    ReviewCommandKind,
+)
 from openagent.tools.errors import RequiresActionError
 from openagent.tools.models import PermissionDecision, ToolExecutionContext, ToolSource
 from openagent.tools.skills import SkillInvocationBridge
@@ -612,13 +618,15 @@ def create_builtin_toolset(
 
 def create_builtin_commands() -> list[Command]:
     return [
-        Command(
+        ReviewCommand(
             id="cmd.review",
             name="review",
             kind=CommandKind.REVIEW,
             description="Run a verification or critique command.",
             visibility=CommandVisibility.BOTH,
             source="builtin_review",
+            review_kind=ReviewCommandKind.VERIFICATION,
+            execution_mode="task_runtime",
         )
     ]
 

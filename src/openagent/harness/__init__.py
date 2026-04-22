@@ -37,7 +37,15 @@ from openagent.harness.task import (
     InMemoryTaskManager,
     LocalBackgroundAgentOrchestrator,
     LocalTaskKind,
+    LocalVerificationRuntime,
     TaskManager,
+    TaskRegistry,
+    TaskRetentionPolicy,
+    TaskRetentionRuntime,
+    VerificationRequest,
+    VerificationResult,
+    VerificationVerdict,
+    VerifierTaskHandle,
 )
 
 __all__ = [
@@ -68,8 +76,16 @@ __all__ = [
     "ResolvedPromptSections",
     "InMemoryTaskManager",
     "LocalBackgroundAgentOrchestrator",
+    "LocalVerificationRuntime",
     "LocalTaskKind",
     "TaskManager",
+    "TaskRegistry",
+    "TaskRetentionPolicy",
+    "TaskRetentionRuntime",
+    "VerificationRequest",
+    "VerificationResult",
+    "VerificationVerdict",
     "UrllibHttpTransport",
+    "VerifierTaskHandle",
     "load_model_from_env",
 ]

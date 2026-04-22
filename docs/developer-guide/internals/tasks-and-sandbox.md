@@ -11,9 +11,14 @@
 - generic task
 - background task
 - verifier task
-- checkpoint
-- complete
-- fail
+- task registry
+- task implementation registry
+- checkpoint / progress event
+- complete / fail / kill
+- event cursor read
+- output cursor read
+- chat/session observer retention
+- terminal notification dedupe
 - local background agent execution
 
 ## Why Local Task Handles Exist
@@ -24,19 +29,43 @@
 - 某个 verifier 在检查结果
 - 某个任务已经失败或完成
 
-所以 `InMemoryTaskManager` 现在已经有：
+所以 `TaskManager` 现在不仅提供 task record update APIs，还提供：
 
-- `BackgroundTaskHandle`
-- `LocalTaskKind`
-- task record update APIs
+- `spawn / register / update`
+- `append_event / append_output`
+- `read_events / read_output`
+- `await / kill`
+- `attach_observer / detach_observer`
+- `mark_notified / evict_expired`
 
-现在还补上了 `LocalBackgroundAgentOrchestrator`：
+`TaskRegistry` 现在是 task state 的单一事实来源；
+`TaskImplementationRegistry` 则负责把 `await / kill / read_output / read_events`
+路由到具体的 background/verifier 本地实现。
+
+现在还补上了：
+
+- `LocalBackgroundAgentOrchestrator`
+- `LocalVerificationRuntime`
 
 - 父链路先拿到独立 task handle
 - 真正执行在后台线程里进行
-- 通过 task events 观测 `task_created / task_progress / task_completed / task_failed / task_killed`
+- 通过 task events 观测 `task_started / task_progress / task_completed / task_failed / task_killed`
+- verifier task 会产出结构化 `VerificationResult`
 
-这让本地实现已经满足了 background-agent 的最小 conformance 语义，而不是只停留在 record API。
+task 的 observer 语义在 OpenAgent 里按实际产品面落成：
+
+- observer 不是 terminal viewer
+- observer = channel chat / session chat 对 task 的附着
+- terminal task 在 chat 仍持有期间不会立刻回收
+- 解绑后才进入 grace period / eviction
+
+这让本地实现已经覆盖：
+
+- runtime task lifecycle
+- task output cursor and resume
+- task retention and eviction
+- background-agent baseline
+- local verifier baseline
 
 ## Sandbox
 

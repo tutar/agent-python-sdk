@@ -37,7 +37,7 @@
   - canonical objects
   - runtime events
   - terminal state
-  - task record
+  - task record / task event
 - `harness`
   - `harness/runtime/` 主运行时子域
   - `SimpleHarness` facade
@@ -73,7 +73,10 @@
 其中 task 与 sub-agent 编排属于 `harness` 域：
 
 - task lifecycle
+- task registry / implementation registry
 - background / verifier task baseline
+- output cursor / event cursor / restore-safe reads
+- chat-bound observer retention / eviction
 - delegated or detached local sub-agent execution
 
 ## Main Runtime Flow

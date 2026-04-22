@@ -85,9 +85,12 @@
   - local runtime assembly
   - runtime wiring helpers
 - `task/`
-  - task manager
+  - task registry / implementation registry
   - background task lifecycle
+  - verifier task runtime
   - task persistence / handles / events
+  - output cursor / output slice
+  - terminal notification / retention / eviction
 - `subagents/`
   - sub-agent coordination
   - verifier / reflection / delegated execution flows
@@ -155,6 +158,14 @@
 - `harness/subagents/`
   - 目录职责已经确定
   - 但更完整的 sub-agent coordination 代码还会继续向这里收敛
+
+当前 `harness/task/` 已经不再只是 background helper：
+
+- `TaskRegistry` 是 task state 的单一事实来源
+- `TaskImplementationRegistry` 负责按 task/type 分发 `await / kill / read_output / read_events`
+- background task 与 verifier task 共用同一套 task lifecycle
+- task 输出通过 `output_ref + output_cursor` 暴露增量读取语义
+- terminal notification、chat/session observer 持有、retention / eviction 都在这个子域内收口
 
 当前 `harness/runtime/` 已经收口为主运行时目录：
 

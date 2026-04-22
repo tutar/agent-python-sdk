@@ -8,6 +8,7 @@ from openagent.harness.task import (
     BackgroundTaskContext,
     InMemoryTaskManager,
     LocalBackgroundAgentOrchestrator,
+    TaskRetentionPolicy,
 )
 from openagent.object_model import JsonObject, RuntimeEventType, TerminalStatus, ToolResult
 from openagent.sandbox import LocalSandbox, SandboxExecutionRequest
@@ -558,7 +559,7 @@ def test_conformance_background_agent() -> None:
     )
 
     initial_events = orchestrator.list_events(handle.task_id)
-    assert initial_events[0].event_type.value == "task_created"
+    assert initial_events[0].event_type.value == "task_started"
 
     for _ in range(20):
         task = orchestrator.get_task(handle.task_id)
@@ -572,3 +573,77 @@ def test_conformance_background_agent() -> None:
     assert events[-1].event_type.value == "task_completed"
     assert task.output_ref == "memory://tasks/summary"
     assert task.status is TerminalStatus.COMPLETED
+
+
+def test_conformance_runtime_task_lifecycle() -> None:
+    manager = InMemoryTaskManager()
+    orchestrator = LocalBackgroundAgentOrchestrator(manager)
+
+    completed = orchestrator.start_background_task(
+        "complete",
+        lambda context: (context.progress({"summary": "running"}) or {"output_ref": "memory://done"}),
+    )
+    failed = orchestrator.start_background_task(
+        "fail",
+        lambda context: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    killed = orchestrator.start_background_task("kill", lambda context: {"output_ref": "noop"})
+    orchestrator.kill_task(killed.task_id)
+
+    for _ in range(20):
+        if manager.get(completed.task_id).status is TerminalStatus.COMPLETED:
+            break
+
+    try:
+        orchestrator._futures[failed.task_id].result(timeout=1)
+    except RuntimeError:
+        pass
+
+    completed_task = manager.get(completed.task_id)
+    failed_task = manager.get(failed.task_id)
+    killed_task = manager.get(killed.task_id)
+
+    assert completed_task.status is TerminalStatus.COMPLETED
+    assert failed_task.status is TerminalStatus.FAILED
+    assert str(killed_task.status) == TerminalStatus.KILLED.value
+    assert completed_task.end_time is not None
+    assert failed_task.metadata is not None and failed_task.metadata["reason"] == "boom"
+
+
+def test_conformance_task_output_cursor_and_resume(tmp_path: Path) -> None:
+    from openagent.harness.task import FileTaskManager
+
+    manager = FileTaskManager(str(tmp_path / "tasks"))
+    task = manager.create_background_task("stream")
+    manager.append_output(task.task_id, "line-1")
+    cursor = manager.append_output(task.task_id, "line-2")
+    manager.complete_task(task.task_id, output_ref=f"memory://tasks/{task.task_id}/output")
+
+    recovered = FileTaskManager(str(tmp_path / "tasks"))
+    slice_ = recovered.read_output(task.task_id, cursor=1)
+    events = recovered.read_events(task.task_id)
+
+    assert cursor == 2
+    assert slice_.items == ["line-2"]
+    assert slice_.cursor == 2
+    assert events.cursor >= 2
+    assert recovered.get(task.task_id).output_ref == f"memory://tasks/{task.task_id}/output"
+
+
+def test_conformance_task_retention_and_eviction(tmp_path: Path) -> None:
+    from openagent.harness.task import FileTaskManager
+
+    manager = FileTaskManager(
+        str(tmp_path / "tasks"),
+        retention_policy=TaskRetentionPolicy(grace_period_seconds=0),
+    )
+    task = manager.create_background_task("notify")
+    manager.complete_task(task.task_id, output_ref=f"memory://tasks/{task.task_id}/output")
+    manager.mark_notified(task.task_id)
+    manager.attach_observer(task.task_id, "feishu:chat:group_1")
+
+    assert manager.evict_expired(now_timestamp="2030-01-01T00:00:00+00:00") == []
+
+    manager.detach_observer(task.task_id, "feishu:chat:group_1")
+
+    assert manager.evict_expired(now_timestamp="2030-01-01T00:00:00+00:00") == [task.task_id]

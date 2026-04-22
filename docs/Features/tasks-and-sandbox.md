@@ -8,9 +8,15 @@
 - background task handle
 - verifier task handle
 - local background agent orchestrator
-- checkpoint
-- complete
-- fail
+- local verification runtime
+- task registry / implementation registry
+- checkpoint / progress / terminal task events
+- complete / fail / kill
+- file-backed event persistence
+- `output_ref + output_cursor`
+- `read_events / read_output / await / kill`
+- terminal notification dedupe via `notified`
+- chat/session observer retention and eviction
 - file-backed task persistence
 - restart-safe task/handle recovery
 
