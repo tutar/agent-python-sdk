@@ -142,6 +142,9 @@
 - `gateway/channels/wechat/assembly.py`
   - WeChat-specific runtime / gateway / host assembly 归到 channel 子包旁边
   - `gateway/assemblies/wechat.py` 只保留兼容导出
+- `gateway/channels/wecom/assembly.py`
+  - WeCom-specific runtime / gateway / host assembly 归到 channel 子包旁边
+  - `gateway/assemblies/wecom.py` 只保留兼容导出
 
 ## Refactor Rules
 
@@ -255,6 +258,16 @@
 - `gateway/channels/wechat/assembly.py`
 
 这里的实现只负责微信私聊到 Gateway 的投影和 host glue，二维码登录、长轮询与 `context_token` 管理由 `wechatbot-sdk` 负责。
+
+`wecom` channel 当前收口为：
+
+- `gateway/channels/wecom/adapter.py`
+- `gateway/channels/wecom/client.py`
+- `gateway/channels/wecom/host.py`
+- `gateway/channels/wecom/dedupe.py`
+- `gateway/channels/wecom/assembly.py`
+
+这里的实现负责企业微信 AI Bot WebSocket 的最小协议层和 Gateway 投影，只依赖 `aiohttp/httpx`，不引入第三方 WeCom SDK。
 
 ## Recommended Reading Order
 

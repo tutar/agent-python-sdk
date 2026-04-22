@@ -3,13 +3,13 @@
 `openagent` 现在按统一 host 模型运行：
 
 - Python host 负责拉起唯一的 `Gateway + runtime + session/memory`
-- `terminal`、`feishu` 和 `wechat` 都只是这个 host 上的 channel
+- `terminal`、`feishu`、`wechat` 和 `wecom` 都只是这个 host 上的 channel
 - `--channel ...` 只表示启动时预加载哪些 channel
 - 未预加载的 channel 可以在运行中通过 `/channel <name>` 加载
 
 最重要的结论只有一句：
 
-先启动 `openagent host`，再让 TUI、Feishu 或 WeChat 接入它。
+先启动 `openagent host`，再让 TUI、Feishu、WeChat 或 WeCom 接入它。
 
 下面所有命令都以项目根目录为当前工作目录执行。源码 checkout 下推荐统一使用 `uv run openagent-host`。
 
@@ -254,6 +254,60 @@ uv run openagent-host --channel wechat
 首次启动时 SDK 会触发二维码登录流程。更详细的私聊链路、代码地图和测试方式见：
 
 - `docs/developer-guide/wechat-private-chat.md`
+
+## Quickstart 6: Load WeCom Private Chat On The Same Host
+
+企业微信私聊通道使用 AI Bot WebSocket，OpenAgent 直接基于 `aiohttp/httpx` 实现最小协议层，不引入小众第三方 WeCom SDK，也不需要 sidecar。
+
+先安装可选依赖：
+
+```bash
+uv sync --extra wecom
+```
+
+配置企业微信 AI Bot 凭证：
+
+```bash
+export OPENAGENT_WECOM_BOT_ID=your_bot_id
+export OPENAGENT_WECOM_SECRET=your_secret
+export OPENAGENT_WECOM_ALLOWED_USERS=userid_1,userid_2
+export OPENAGENT_PROVIDER=openai
+export OPENAGENT_BASE_URL=http://127.0.0.1:8080
+export OPENAGENT_MODEL=Qwen3.5-9B-Q4_K_M.gguf
+export OPENAGENT_WORKSPACE_ROOT=$PWD
+uv run --extra wecom openagent-host --channel wecom
+```
+
+注意：`OPENAGENT_BASE_URL` 写服务根地址，不要带 `/v1`。OpenAgent 会自动拼 `/v1/chat/completions`；如果写成 `http://127.0.0.1:8080/v1`，模型服务会收到 `/v1/v1/chat/completions` 并返回 `404`。
+
+企业微信订阅成功时应看到：
+
+```text
+wecom-host> websocket connected url=wss://openws.work.weixin.qq.com
+wecom-host> sent aibot_subscribe frame
+wecom-host> subscription acknowledged
+```
+
+如果看到 `errcode=853000 invalid bot_id or secret`，说明 `OPENAGENT_WECOM_BOT_ID` / `OPENAGENT_WECOM_SECRET` 不是同一个企业微信 AI Bot 的有效凭证。
+
+也可以运行中加载：
+
+```text
+/channel-config wecom bot_id your_bot_id
+/channel-config wecom secret your_secret
+/channel-config wecom allowed_users userid_1,userid_2
+/channel wecom
+```
+
+可选配置：
+
+```text
+/channel-config wecom ws_url wss://openws.work.weixin.qq.com
+```
+
+更详细的私聊链路、代码地图和测试方式见：
+
+- `docs/developer-guide/wecom-private-chat.md`
 
 Feishu 当前审批交互不再依赖聊天里的 `/approve`、`/reject`，而是通过 reply card 上的 `Approve` / `Reject` 按钮完成。`interrupt`、`resume` 继续属于主动控制指令，不承载在审批卡片按钮中。
 

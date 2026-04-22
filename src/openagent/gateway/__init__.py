@@ -1,7 +1,12 @@
 """Gateway package exports."""
 
 from .binding_store import FileSessionBindingStore
-from .channels import FeishuChannelAdapter, TerminalChannelAdapter, WechatChannelAdapter
+from .channels import (
+    FeishuChannelAdapter,
+    TerminalChannelAdapter,
+    WeComChannelAdapter,
+    WechatChannelAdapter,
+)
 from .channels.feishu import (
     FEISHU_REACTION_COMPLETED,
     FEISHU_REACTION_IN_PROGRESS,
@@ -30,6 +35,18 @@ from .channels.wechat import (
     create_wechat_host_from_env,
     create_wechat_runtime,
 )
+from .channels.wecom import (
+    FileWeComInboundDedupeStore,
+    InMemoryWeComInboundDedupeStore,
+    WeComAiBotClient,
+    WeComAppConfig,
+    WeComBotClient,
+    WeComPrivateChatHost,
+    create_wecom_gateway,
+    create_wecom_host,
+    create_wecom_host_from_env,
+    create_wecom_runtime,
+)
 from .core import Gateway
 from .interfaces import ChannelAdapter, SessionAdapter, SessionBindingStore
 from .models import (
@@ -47,6 +64,7 @@ __all__ = [
     "ChannelIdentity",
     "EgressEnvelope",
     "FileSessionBindingStore",
+    "FileWeComInboundDedupeStore",
     "FileFeishuInboundDedupeStore",
     "FEISHU_REACTION_COMPLETED",
     "FEISHU_REACTION_IN_PROGRESS",
@@ -61,6 +79,7 @@ __all__ = [
     "InboundEnvelope",
     "InMemoryFeishuInboundDedupeStore",
     "InMemoryWechatInboundDedupeStore",
+    "InMemoryWeComInboundDedupeStore",
     "InProcessSessionAdapter",
     "LocalSessionHandle",
     "NormalizedInboundMessage",
@@ -69,6 +88,11 @@ __all__ = [
     "SessionBinding",
     "SessionBindingStore",
     "TerminalChannelAdapter",
+    "WeComAiBotClient",
+    "WeComAppConfig",
+    "WeComBotClient",
+    "WeComChannelAdapter",
+    "WeComPrivateChatHost",
     "WechatAppConfig",
     "WechatBotClient",
     "WechatChannelAdapter",
@@ -78,6 +102,10 @@ __all__ = [
     "create_feishu_host",
     "create_feishu_host_from_env",
     "create_feishu_runtime",
+    "create_wecom_gateway",
+    "create_wecom_host",
+    "create_wecom_host_from_env",
+    "create_wecom_runtime",
     "create_wechat_gateway",
     "create_wechat_host",
     "create_wechat_host_from_env",
