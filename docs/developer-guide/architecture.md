@@ -51,7 +51,11 @@
   - replay
   - single active harness lease
   - short-term session memory
-  - `session.memory` scoped durable memory recall and consolidation baseline
+- `durable_memory`
+  - bounded recall
+  - resident entrypoint/index + manifest layering
+  - consolidation
+  - payload taxonomy and overlay baseline
 - `tools`
   - tool registry
   - tool executor
@@ -248,7 +252,7 @@ runtime 侧的调用点现在归在 `harness/runtime/projection/`，而具体 si
 
 这层的职责是“让开发者和 host 看见发生了什么”，而不是承担 replay 或 durability。
 
-## Session And Memory Boundaries
+## Session And Durable Memory Boundaries
 
 当前 session 负责 transcript、working state、short-term continuity 和 single active harness lease。
 

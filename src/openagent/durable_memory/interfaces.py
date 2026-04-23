@@ -1,13 +1,21 @@
-"""Memory store interfaces."""
+"""Durable memory interfaces."""
 
 from __future__ import annotations
 
 import builtins
 from typing import Protocol
 
-from openagent.session.memory.models import (
+from openagent.durable_memory.models import (
+    AutoMemoryRuntimeConfig,
+    DirectMemoryWriteRequest,
+    DirectMemoryWriteResult,
+    DreamConsolidationRequest,
+    DreamConsolidationResult,
+    DurableMemoryRecallRequest,
     MemoryConsolidationJob,
     MemoryConsolidationResult,
+    MemoryExtractionRequest,
+    MemoryExtractionResult,
     MemoryRecallHandle,
     MemoryRecallResult,
     MemoryRecord,
@@ -20,7 +28,7 @@ class DurableMemoryStore(Protocol):
         """Persist a durable memory record and return its identifier."""
 
     def update_memory(self, memory_id: str, patch: dict[str, object]) -> MemoryRecord:
-        """Patch an existing memory record."""
+        """Patch an existing durable memory record."""
 
     def delete(self, memory_id: str) -> bool:
         """Delete a durable memory record."""
@@ -42,10 +50,16 @@ class DurableMemoryExtractor(Protocol):
     ) -> builtins.list[MemoryRecord]:
         """Extract durable memory candidates from a transcript slice."""
 
+    def extract_memories(self, request: MemoryExtractionRequest) -> MemoryExtractionResult:
+        """Run the turn-end extraction path without mutating transcript state."""
+
 
 class MemoryRecallEngine(Protocol):
     def prefetch(self, query: str, runtime_context: dict[str, object]) -> MemoryRecallHandle:
         """Prepare a bounded durable memory recall."""
+
+    def prefetch_request(self, request: DurableMemoryRecallRequest) -> MemoryRecallHandle:
+        """Prepare layered durable recall from an explicit recall request."""
 
     def collect(self, recall_handle: MemoryRecallHandle) -> MemoryRecallResult:
         """Collect memory attachments from a recall handle."""
@@ -65,10 +79,13 @@ class MemoryConsolidator(Protocol):
         transcript_slice: builtins.list[SessionMessage],
         agent_id: str | None = None,
     ) -> MemoryConsolidationJob:
-        """Schedule a durable memory consolidation job."""
+        """Schedule a durable memory extraction/consolidation job."""
 
     def run(self, consolidation_job: MemoryConsolidationJob) -> MemoryConsolidationResult:
         """Run a previously scheduled durable consolidation job."""
+
+    def dream(self, request: DreamConsolidationRequest) -> DreamConsolidationResult:
+        """Run dream-style consolidation as a separate write path."""
 
 
 class MemoryStore(
@@ -78,8 +95,16 @@ class MemoryStore(
     MemoryConsolidator,
     Protocol,
 ):
+    runtime_config: AutoMemoryRuntimeConfig
+
+    def is_enabled(self) -> bool:
+        """Return whether the auto-memory runtime is enabled."""
+
     def upsert_memory(self, record: MemoryRecord) -> MemoryRecord:
         """Persist or update a durable memory record."""
+
+    def direct_write(self, request: DirectMemoryWriteRequest) -> DirectMemoryWriteResult:
+        """Persist a memory record through the foreground direct-write path."""
 
     def recall(
         self,

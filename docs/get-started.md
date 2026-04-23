@@ -2,7 +2,7 @@
 
 `openagent` 现在按统一 host 模型运行：
 
-- Python host 负责拉起唯一的 `Gateway + runtime + session/memory`
+- Python host 负责拉起唯一的 `Gateway + runtime + session + durable_memory`
 - `terminal`、`feishu`、`wechat` 和 `wecom` 都只是这个 host 上的 channel
 - `--channel ...` 只表示启动时预加载哪些 channel
 - 未预加载的 channel 可以在运行中通过 `/channel <name>` 加载

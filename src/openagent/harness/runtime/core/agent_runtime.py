@@ -10,6 +10,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import cast
 
+from openagent.durable_memory import MemoryStore
 from openagent.harness.bootstrap import (
     BootstrapPromptAssembler,
     InitialUserBootstrap,
@@ -64,14 +65,12 @@ from openagent.observability import (
     SpanHandle,
 )
 from openagent.session import (
-    MemoryStore,
     SessionMessage,
     SessionRecord,
     SessionStatus,
     SessionStore,
-    ShortTermMemoryStore,
-    ShortTermSessionMemory,
 )
+from openagent.session.short_term_memory import ShortTermMemoryStore, ShortTermSessionMemory
 from openagent.tools import (
     ToolCall,
     ToolCancelledError,
@@ -203,7 +202,11 @@ class SimpleHarness(Harness):
                         )
                     )
         memory_context = self._load_agents_memory_context(session_slice)
-        if self.memory_store is not None and session_slice.messages:
+        if (
+            self.memory_store is not None
+            and self.memory_store.is_enabled()
+            and session_slice.messages
+        ):
             latest_query = session_slice.messages[-1].content
             recall_result = self.memory_store.recall(
                 session_slice.session_id,
@@ -276,7 +279,7 @@ class SimpleHarness(Harness):
             )
             if update.memory is not None:
                 session.short_term_memory = update.memory.to_dict()
-        if self.memory_store is not None and session.messages:
+        if self.memory_store is not None and self.memory_store.is_enabled() and session.messages:
             job = self.memory_store.schedule(
                 session.session_id,
                 list(session.messages),

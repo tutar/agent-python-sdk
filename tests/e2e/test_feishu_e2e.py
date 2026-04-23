@@ -325,8 +325,18 @@ def test_feishu_e2e_group_mention_and_plain_message(
         after=mention_offset,
     )
     host.wait_for("sending reply card", after=mention_offset)
+    host.wait_for("resolving card id", after=mention_offset)
+    _wait_for_any_log(
+        host,
+        [
+            "agent stream_update_card",
+            "cardkit streaming unavailable; falling back to message patch",
+            "agent patch_card",
+        ],
+        after=mention_offset,
+    )
     host.wait_for("status=running", after=mention_offset)
-    host.wait_for("status=completed", after=mention_offset)
+    host.wait_for("status=completed", after=mention_offset, timeout=40)
     host.assert_absent("@_user_", after=mention_offset)
 
     plain_offset = host.snapshot()

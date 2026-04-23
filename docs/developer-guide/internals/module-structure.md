@@ -17,6 +17,13 @@
   - canonical objects
   - runtime events
   - shared records and payloads
+- `durable_memory/`
+  - bounded recall
+  - resident index / manifest layering
+  - consolidation
+  - payload taxonomy
+  - overlay scopes
+  - durable store baselines
 - `harness/`
   - turn runtime
   - model providers
@@ -28,7 +35,6 @@
   - event log
   - checkpoint / cursor / resume
   - short-term memory
-  - `session.memory` linkage
 - `tools/`
   - builtin tools
   - commands
@@ -147,6 +153,7 @@
 - `object_model/`
 - `harness/`
 - `session/`
+- `durable_memory/`
 - `tools/`
 - `sandbox/`
 - `gateway/`

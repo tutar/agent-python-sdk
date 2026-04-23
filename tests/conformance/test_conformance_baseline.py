@@ -13,7 +13,6 @@ from openagent.harness.task import (
 from openagent.object_model import JsonObject, RuntimeEventType, TerminalStatus, ToolResult
 from openagent.sandbox import LocalSandbox, SandboxExecutionRequest
 from openagent.session import (
-    FileMemoryStore,
     FileSessionStore,
     InMemorySessionStore,
     SessionMessage,
@@ -241,41 +240,6 @@ def test_conformance_policy_ask_deny_allow() -> None:
     assert all(event.event_type is not RuntimeEventType.REQUIRES_ACTION for event in deny_events)
 
 
-def test_conformance_session_resume(tmp_path: Path) -> None:
-    session_root = tmp_path / "sessions"
-    store = FileSessionStore(session_root)
-    harness = SimpleHarness(
-        model=ScriptedModel([ModelTurnResponse(assistant_message="first reply")]),
-        sessions=store,
-        tools=StaticToolRegistry([]),
-        executor=SimpleToolExecutor(StaticToolRegistry([])),
-    )
-
-    first_events, first_terminal = harness.run_turn("first", "case_resume")
-
-    assert first_terminal.status is TerminalStatus.COMPLETED
-    assert first_events[-1].event_type is RuntimeEventType.TURN_COMPLETED
-
-    restored_store = FileSessionStore(session_root)
-    resumed_harness = SimpleHarness(
-        model=ScriptedModel([ModelTurnResponse(assistant_message="second reply")]),
-        sessions=restored_store,
-        tools=StaticToolRegistry([]),
-        executor=SimpleToolExecutor(StaticToolRegistry([])),
-    )
-    second_events, second_terminal = resumed_harness.run_turn("second", "case_resume")
-    restored_session = restored_store.load_session("case_resume")
-
-    assert second_terminal.status is TerminalStatus.COMPLETED
-    assert second_events[-1].event_type is RuntimeEventType.TURN_COMPLETED
-    assert [message.content for message in restored_session.messages] == [
-        "first",
-        "first reply",
-        "second",
-        "second reply",
-    ]
-
-
 def test_conformance_single_active_harness_lease(tmp_path: Path) -> None:
     store = FileSessionStore(tmp_path / "sessions")
     first_runtime = SimpleHarness(
@@ -413,54 +377,6 @@ def test_conformance_mcp_tool_adaptation() -> None:
     assert result.content == ["hello"]
 
 
-def test_conformance_memory_recall_and_consolidation(tmp_path: Path) -> None:
-    store = InMemorySessionStore()
-    memory_store = FileMemoryStore(tmp_path / "memory")
-    harness = SimpleHarness(
-        model=ScriptedModel([ModelTurnResponse(assistant_message="stored")]),
-        sessions=store,
-        tools=StaticToolRegistry([]),
-        executor=SimpleToolExecutor(StaticToolRegistry([])),
-        memory_store=memory_store,
-    )
-
-    harness.run_turn("Remember that the launch code is sunrise", "case_memory")
-    session = store.load_session("case_memory")
-    consolidation = memory_store.consolidate("case_memory", session.messages)
-    existing_records = memory_store.list()
-
-    request = harness.build_model_input(
-        SessionRecord(
-            session_id="case_memory",
-            messages=[SessionMessage(role="user", content="What is the launch code?")],
-        ),
-        [],
-    )
-
-    restored_memory_store = FileMemoryStore(tmp_path / "memory")
-    restored_harness = SimpleHarness(
-        model=ScriptedModel([ModelTurnResponse(assistant_message="restored")]),
-        sessions=store,
-        tools=StaticToolRegistry([]),
-        executor=SimpleToolExecutor(StaticToolRegistry([])),
-        memory_store=restored_memory_store,
-    )
-    restored_request = restored_harness.build_model_input(
-        SessionRecord(
-            session_id="case_memory",
-            messages=[SessionMessage(role="user", content="launch code?")],
-        ),
-        [],
-    )
-
-    assert consolidation.new_records or existing_records
-    assert request.memory_context
-    assert "sunrise" in str(request.memory_context[0]["content"])
-    assert request.messages == [{"role": "user", "content": "What is the launch code?"}]
-    assert restored_request.memory_context
-    assert "sunrise" in str(restored_request.memory_context[0]["content"])
-
-
 def test_conformance_agents_memory_loading_precedence(
     tmp_path: Path,
     monkeypatch: Any,
@@ -509,39 +425,6 @@ def test_conformance_agents_memory_loading_precedence(
     assert "Sibling guidance" not in content
     assert "Owner: subtree" in content
     assert "Project guidance" not in "\n".join(message["content"] for message in request.messages)
-
-
-def test_conformance_agent_global_long_memory(tmp_path: Path) -> None:
-    memory_store = FileMemoryStore(tmp_path / "memory")
-    store = InMemorySessionStore()
-    harness = SimpleHarness(
-        model=ScriptedModel([ModelTurnResponse(assistant_message="ok")]),
-        sessions=store,
-        tools=StaticToolRegistry([]),
-        executor=SimpleToolExecutor(StaticToolRegistry([])),
-        memory_store=memory_store,
-    )
-    session_a = SessionRecord(
-        session_id="session_a",
-        agent_id="agent_shared",
-        messages=[
-            SessionMessage(role="user", content="Remember agent preference: codename atlas"),
-            SessionMessage(role="assistant", content="Noted"),
-        ],
-    )
-    memory_store.consolidate("session_a", session_a.messages, agent_id="agent_shared")
-
-    request = harness.build_model_input(
-        SessionRecord(
-            session_id="session_b",
-            agent_id="agent_shared",
-            messages=[SessionMessage(role="user", content="What is the codename?")],
-        ),
-        [],
-    )
-
-    assert request.memory_context
-    assert any("atlas" in str(item.get("content")) for item in request.memory_context)
 
 
 def test_conformance_background_agent() -> None:

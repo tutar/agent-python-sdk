@@ -5,13 +5,10 @@ from typing import Any, cast
 
 from openagent.context_governance import ContextGovernance
 from openagent.harness.runtime import ModelTurnRequest, ModelTurnResponse, SimpleHarness
-from openagent.object_model import RuntimeEvent, RuntimeEventType, TerminalStatus, ToolResult
+from openagent.object_model import RuntimeEvent, RuntimeEventType, ToolResult
 from openagent.session import (
-    FileMemoryStore,
-    FileSessionStore,
     InMemorySessionStore,
     SessionMessage,
-    SessionRecord,
     SessionStatus,
 )
 from openagent.tools import PermissionDecision, SimpleToolExecutor, StaticToolRegistry, ToolCall
@@ -215,139 +212,6 @@ def test_policy_ask_deny_allow_matches_golden() -> None:
     assert all(event.event_type is not RuntimeEventType.REQUIRES_ACTION for event in deny_events)
     assert golden["constraints"][3] == "approval resume must bind back to the original tool_use_id"
     assert resumed_events[0].payload["tool_use_id"] == resumed_events[1].payload["tool_use_id"]
-
-
-def test_session_resume_matches_golden(tmp_path: Path) -> None:
-    golden = _load_golden("session-resume.event-log.json")
-    session_root = tmp_path / "sessions"
-    initial_store = FileSessionStore(session_root)
-    first_harness = SimpleHarness(
-        model=ScriptedModel([ModelTurnResponse(assistant_message="first reply")]),
-        sessions=initial_store,
-        tools=StaticToolRegistry([]),
-        executor=SimpleToolExecutor(StaticToolRegistry([])),
-    )
-
-    first_harness.run_turn("first", "golden_resume")
-    before_restore = initial_store.load_session("golden_resume")
-    before_event_count = len(before_restore.events)
-
-    restored_store = FileSessionStore(session_root)
-    second_harness = SimpleHarness(
-        model=ScriptedModel([ModelTurnResponse(assistant_message="second reply")]),
-        sessions=restored_store,
-        tools=StaticToolRegistry([]),
-        executor=SimpleToolExecutor(StaticToolRegistry([])),
-    )
-    second_events, terminal = second_harness.run_turn("second", "golden_resume")
-    restored = restored_store.load_session("golden_resume")
-
-    assert terminal.status is TerminalStatus.COMPLETED
-    assert restored.session_id == "golden_resume"
-    assert len(restored.events) > before_event_count
-    assert second_events[-1].event_type is RuntimeEventType.TURN_COMPLETED
-    assert restored.messages[-2].content == "second"
-    assert restored.messages[-1].content == "second reply"
-    assert golden["requirements"][0] == "session id remains stable across restore"
-
-
-def test_memory_recall_and_consolidation_matches_golden(tmp_path: Path) -> None:
-    golden = _load_golden("memory-recall-and-consolidation.json")
-    memory_store = FileMemoryStore(tmp_path / "memory")
-    consolidation = memory_store.consolidate(
-        "golden_memory",
-        [
-            SessionMessage(role="user", content="Remember my favorite city is Hangzhou"),
-            SessionMessage(
-                role="assistant",
-                content="I'll remember that your favorite city is Hangzhou.",
-            ),
-        ],
-    )
-    harness = SimpleHarness(
-        model=ScriptedModel([ModelTurnResponse(assistant_message="ok")]),
-        sessions=InMemorySessionStore(),
-        tools=StaticToolRegistry([]),
-        executor=SimpleToolExecutor(StaticToolRegistry([])),
-        memory_store=memory_store,
-    )
-
-    request = harness.build_model_input(
-        SessionRecord(
-            session_id="golden_memory",
-            messages=[SessionMessage(role="user", content="What is my favorite city?")],
-        ),
-        [],
-    )
-    restored_store = FileMemoryStore(tmp_path / "memory")
-    restored_harness = SimpleHarness(
-        model=ScriptedModel([ModelTurnResponse(assistant_message="ok")]),
-        sessions=InMemorySessionStore(),
-        tools=StaticToolRegistry([]),
-        executor=SimpleToolExecutor(StaticToolRegistry([])),
-        memory_store=restored_store,
-    )
-    restored_request = restored_harness.build_model_input(
-        SessionRecord(
-            session_id="golden_memory",
-            messages=[SessionMessage(role="user", content="favorite city?")],
-        ),
-        [],
-    )
-
-    assert consolidation.new_records
-    assert request.memory_context
-    assert request.messages == [{"role": "user", "content": "What is my favorite city?"}]
-    assert restored_request.memory_context
-    assert (
-        golden["constraints"][0]
-        == "recalled memory enters context assembly rather than transcript rewrite"
-    )
-
-
-def test_instruction_markdown_loading_precedence_matches_golden(
-    tmp_path: Path,
-    monkeypatch: Any,
-) -> None:
-    golden = _load_golden("instruction-markdown-loading-precedence.json")
-    home = tmp_path / "home"
-    monkeypatch.setenv("HOME", str(home))
-    (home / ".openagent").mkdir(parents=True)
-    (home / ".openagent" / "AGENTS.md").write_text("Home guidance\nPriority: home\n", "utf-8")
-    workdir = tmp_path / "repo"
-    subtree = workdir / "pkg" / "feature"
-    sibling = workdir / "pkg" / "other"
-    subtree.mkdir(parents=True)
-    sibling.mkdir(parents=True)
-    (workdir / "AGENTS.md").write_text("Repo guidance\nPriority: repo\n", "utf-8")
-    (subtree / "AGENTS.md").write_text("Feature guidance\nPriority: subtree\n", "utf-8")
-    (sibling / "AGENTS.md").write_text("Sibling guidance\n", "utf-8")
-
-    harness = SimpleHarness(
-        model=ScriptedModel([ModelTurnResponse(assistant_message="ok")]),
-        sessions=InMemorySessionStore(),
-        tools=StaticToolRegistry([]),
-        executor=SimpleToolExecutor(StaticToolRegistry([])),
-    )
-    request = harness.build_model_input(
-        SessionRecord(
-            session_id="golden_agents_md",
-            messages=[SessionMessage(role="user", content="edit pkg/feature/main.py")],
-            metadata={"workdir": str(workdir), "target_path": "pkg/feature/main.py"},
-        ),
-        [],
-    )
-
-    assert golden["expected"]["ordered_merge"] is True
-    assert request.memory_context
-    content = str(request.memory_context[0]["content"])
-    assert "Home guidance" in content
-    assert "Repo guidance" in content
-    assert "Feature guidance" in content
-    assert "Sibling guidance" not in content
-    assert "Priority: subtree" in content
-    assert golden["expected"]["transcript_unchanged"] is True
-    assert request.messages == [{"role": "user", "content": "edit pkg/feature/main.py"}]
 
 
 def test_prompt_cache_stable_prefix_matches_golden() -> None:

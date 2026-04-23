@@ -87,7 +87,7 @@ loop 语义。
 - workspace root
 - tool usage contract
 
-这层 prompt 和 transcript、short-term memory、memory recall 分开建模，不再由 provider adapter 临时拼接。
+这层 prompt 和 transcript、short-term memory、durable memory recall 分开建模，不再由 provider adapter 临时拼接。
 
 当前 `last_context_report` 还会显式暴露：
 
@@ -148,7 +148,8 @@ durable memory 不保存在 `SessionRecord` 里。
 
 - transcript / session state 负责当前会话历史
 - short-term session memory 负责 continuity summary
-- durable memory 负责可被后续 turn recall 的长期信息
+- durable memory 负责可被后续 turn recall 的长期信息，但其实现归到顶层 `durable_memory/`
+- durable memory 采用 resident index -> manifest/header -> payload 的分层 recall，而不是把长期记忆伪装成 transcript 追加
 
 ## Short-Term Memory Flow
 

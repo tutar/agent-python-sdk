@@ -1,3 +1,5 @@
+import importlib
+
 from openagent import (
     SPEC_VERSION,
     AgentObservability,
@@ -12,6 +14,15 @@ from openagent import (
     TerminalStatus,
     ToolResult,
     __version__,
+)
+from openagent.durable_memory import (
+    AutoMemoryRuntime,
+    AutoMemoryRuntimeConfig,
+    DurableMemoryRecallRequest,
+    DurableWritePath,
+    FileMemoryStore,
+    MemoryOverlay,
+    MemoryPayloadType,
 )
 from openagent.harness import Harness
 from openagent.harness.runtime import (
@@ -33,6 +44,13 @@ def test_public_exports_are_importable() -> None:
     assert Harness is not None
     assert AgentObservability is not None
     assert AgentRuntime is not None
+    assert AutoMemoryRuntime is not None
+    assert AutoMemoryRuntimeConfig is not None
+    assert DurableMemoryRecallRequest is not None
+    assert DurableWritePath is not None
+    assert FileMemoryStore is not None
+    assert MemoryOverlay is not None
+    assert MemoryPayloadType is not None
     assert ModelProviderAdapter is not None
     assert ModelProviderStreamingAdapter is not None
     assert RalphLoop is not None
@@ -43,6 +61,8 @@ def test_public_exports_are_importable() -> None:
     assert Sandbox is not None
     assert TaskManager is not None
     assert create_in_memory_runtime is not None
+    openagent_module = importlib.import_module("openagent")
+    assert not hasattr(openagent_module, "FileMemoryStore")
 
 
 def test_object_models_support_dict_serialization() -> None:

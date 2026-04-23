@@ -6,7 +6,7 @@ It focuses on a unified Python host, multi-channel interaction, builtin tools, d
 
 ## Highlights
 
-- Unified host model: one Python host owns `Gateway + runtime + session/memory`, while `terminal` and `feishu` attach as channels
+- Unified host model: one Python host owns `Gateway + runtime + session + durable_memory`, while `terminal` and `feishu` attach as channels
 - Local-first agent runtime: file-backed sessions, durable memory, model I/O capture, and restart-safe local workflows
 - Rich capability surface: builtin tools, policy-aware executor, skills, commands, and MCP compatibility
 - Real integrations: terminal TUI, Feishu channel, Firecrawl-backed `WebFetch / WebSearch`
@@ -40,7 +40,8 @@ OpenAgent runs as a single Python host process. The host owns the runtime, gatew
 At a high level:
 
 - `harness`: turn runtime, provider integration, context assembly
-- `session`: event log, replay, short-term memory, durable state linkage
+- `session`: event log, replay, short-term memory, durable state
+- `durable_memory`: layered durable recall, direct write / extract / dream consolidation, taxonomy-aware long-term memory
 - `tools`: builtin tools, executor, policy, skills, MCP, command surfaces
 - `gateway`: channel normalization, session binding, egress projection
 - `sandbox` and `orchestration`: local execution boundaries and background task baseline
