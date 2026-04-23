@@ -188,6 +188,31 @@ def test_builtin_tools_expose_complete_json_schema() -> None:
         assert field_name in schema["required"]
 
 
+def test_agent_tool_schema_and_background_flag() -> None:
+    def _handler(
+        arguments: dict[str, object],
+        context: ToolExecutionContext | None,
+    ) -> dict[str, object]:
+        return {
+            "task": arguments.get("task"),
+            "background": bool(arguments.get("run_in_background")),
+            "session_id": context.session_id if context is not None else None,
+        }
+
+    toolset = {tool.name: tool for tool in create_builtin_toolset(agent_handler=_handler)}
+    agent_tool = toolset["Agent"]
+    result = agent_tool.call(
+        {"task": "review", "run_in_background": True},
+        ToolExecutionContext(session_id="sess_agent"),
+    )
+
+    assert "run_in_background" in agent_tool.input_schema["properties"]
+    assert result.structured_content is not None
+    linkage = result.structured_content["agent_linkage"]
+    assert linkage["background"] is True
+    assert linkage["session_id"] == "sess_agent"
+
+
 def test_bash_tool_executes_successfully(tmp_path: Path) -> None:
     tool = BashTool(str(tmp_path))
 
@@ -247,6 +272,7 @@ def test_local_runtime_defaults_to_builtin_tool_baseline(tmp_path: Path) -> None
     file_names = {record.tool_name for record in file_backed.tools.list_tool_records()}
 
     expected = {
+        "Agent",
         "Read",
         "Write",
         "Edit",

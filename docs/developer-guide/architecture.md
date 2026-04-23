@@ -43,6 +43,7 @@
   - `SimpleHarness` facade
   - `RalphLoop` turn runtime
   - `context_engineering/` for bootstrap prompts, startup context, assembly, governance, and instruction markdown
+  - `multi_agent/` for delegated worker identity, routing, and viewed transcript projection
   - `projection / post_turn / hooks`
   - provider adapters under `harness/providers`
 - `session`
@@ -75,7 +76,7 @@
   - startup surface
   - local transport and channel loading
 
-其中 task 与 sub-agent 编排属于 `harness` 域：
+其中 task 与 multi-agent 编排属于 `harness` 域：
 
 - task lifecycle
 - task registry / implementation registry
@@ -83,6 +84,8 @@
 - output cursor / event cursor / restore-safe reads
 - chat-bound observer retention / eviction
 - delegated or detached local sub-agent execution
+- viewed transcript projection
+- task-notification routing
 
 ## Main Runtime Flow
 

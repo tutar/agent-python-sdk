@@ -25,6 +25,13 @@ from openagent.durable_memory import (
     MemoryPayloadType,
 )
 from openagent.harness import Harness
+from openagent.harness.multi_agent import (
+    DelegatedAgentIdentity,
+    DelegatedAgentInvocation,
+    LocalMultiAgentRuntime,
+    TaskNotificationRouter,
+    ViewedTranscript,
+)
 from openagent.harness.runtime import (
     AgentRuntime,
     ModelProviderAdapter,
@@ -42,6 +49,8 @@ def test_public_exports_are_importable() -> None:
     assert __version__ == "0.1.0"
     assert SPEC_VERSION == "0.1"
     assert Harness is not None
+    assert DelegatedAgentIdentity is not None
+    assert DelegatedAgentInvocation is not None
     assert AgentObservability is not None
     assert AgentRuntime is not None
     assert AutoMemoryRuntime is not None
@@ -54,12 +63,15 @@ def test_public_exports_are_importable() -> None:
     assert ModelProviderAdapter is not None
     assert ModelProviderStreamingAdapter is not None
     assert RalphLoop is not None
+    assert LocalMultiAgentRuntime is not None
     assert SessionStore is not None
+    assert TaskNotificationRouter is not None
     assert ToolDefinition is not None
     assert ToolRegistry is not None
     assert ToolExecutor is not None
     assert Sandbox is not None
     assert TaskManager is not None
+    assert ViewedTranscript is not None
     assert create_in_memory_runtime is not None
     openagent_module = importlib.import_module("openagent")
     assert not hasattr(openagent_module, "FileMemoryStore")

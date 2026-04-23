@@ -1,6 +1,17 @@
 """Harness module exports."""
 
 from openagent.harness.interfaces import Harness
+from openagent.harness.multi_agent import (
+    DelegatedAgentIdentity,
+    DelegatedAgentInvocation,
+    DirectViewInput,
+    InterAgentMessage,
+    LocalMultiAgentRuntime,
+    TaskNotificationEnvelope,
+    TaskNotificationRouter,
+    ViewedTranscript,
+    ViewedTranscriptEntry,
+)
 from openagent.harness.providers import (
     AnthropicMessagesModelAdapter,
     HttpResponse,
@@ -32,19 +43,26 @@ from openagent.harness.task import (
 __all__ = [
     "BackgroundTaskContext",
     "BackgroundTaskHandle",
+    "DelegatedAgentIdentity",
+    "DelegatedAgentInvocation",
+    "DirectViewInput",
     "AnthropicMessagesModelAdapter",
     "FileTaskManager",
     "Harness",
     "HttpResponse",
     "HttpTransport",
+    "InterAgentMessage",
     "OpenAIChatCompletionsModelAdapter",
     "ProviderConfigurationError",
     "ProviderError",
     "InMemoryTaskManager",
     "LocalBackgroundAgentOrchestrator",
+    "LocalMultiAgentRuntime",
     "LocalVerificationRuntime",
     "LocalTaskKind",
     "TaskManager",
+    "TaskNotificationEnvelope",
+    "TaskNotificationRouter",
     "TaskRegistry",
     "TaskRetentionPolicy",
     "TaskRetentionRuntime",
@@ -53,5 +71,7 @@ __all__ = [
     "VerificationVerdict",
     "UrllibHttpTransport",
     "VerifierTaskHandle",
+    "ViewedTranscript",
+    "ViewedTranscriptEntry",
     "load_model_from_env",
 ]

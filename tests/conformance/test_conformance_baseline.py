@@ -3,12 +3,19 @@ from pathlib import Path
 from typing import Any
 
 from openagent.gateway import ChannelIdentity, Gateway, InboundEnvelope, InProcessSessionAdapter
+from openagent.harness.multi_agent import (
+    DelegatedAgentInvocation,
+    DirectViewInput,
+    LocalMultiAgentRuntime,
+    TaskNotificationRouter,
+)
 from openagent.harness.runtime import ModelTurnRequest, ModelTurnResponse, SimpleHarness
 from openagent.harness.task import (
     BackgroundTaskContext,
     InMemoryTaskManager,
     LocalBackgroundAgentOrchestrator,
     TaskRetentionPolicy,
+    TaskRetentionRuntime,
 )
 from openagent.object_model import JsonObject, RuntimeEventType, TerminalStatus, ToolResult
 from openagent.sandbox import LocalSandbox, SandboxExecutionRequest
@@ -288,6 +295,73 @@ def test_conformance_single_active_harness_lease(tmp_path: Path) -> None:
     assert reacquired is not None
     assert reacquired.harness_instance_id == "gateway_b:lease_case"
     assert second_handle.harness_instance is not None
+
+
+def test_conformance_delegated_agent_identity_and_task_notification_routing() -> None:
+    manager = InMemoryTaskManager(retention_policy=TaskRetentionPolicy(grace_period_seconds=1.0))
+    runtime = LocalMultiAgentRuntime(
+        task_manager=manager,
+        background_orchestrator=LocalBackgroundAgentOrchestrator(manager),
+        retention=TaskRetentionRuntime(manager, TaskRetentionPolicy(grace_period_seconds=1.0)),
+        notification_router=TaskNotificationRouter(),
+    )
+
+    result = runtime.delegate(
+        DelegatedAgentInvocation(
+            prompt="background review",
+            run_in_background=True,
+            parent_session_id="sess_parent",
+            invoking_request_id="req_multi",
+        )
+    )
+    task_id = str(result["task_id"])
+    task = manager.await_task(task_id, timeout=2.0)
+    notifications = runtime.sync_task_notifications("sess_parent")
+
+    assert result["agent"]["parent_session_id"] == "sess_parent"
+    assert result["agent"]["invoking_request_id"] == "req_multi"
+    assert task.metadata is not None
+    assert task.metadata["delegated_agent_id"] == result["agent"]["agent_id"]
+    assert len(notifications) == 1
+    assert notifications[0]["recipient"]["recipient_id"] == "sess_parent"
+    assert runtime.sync_task_notifications("other_session") == []
+
+
+def test_conformance_viewed_transcript_retention_and_direct_view_input() -> None:
+    manager = InMemoryTaskManager(retention_policy=TaskRetentionPolicy(grace_period_seconds=1.0))
+    runtime = LocalMultiAgentRuntime(
+        task_manager=manager,
+        background_orchestrator=LocalBackgroundAgentOrchestrator(manager),
+        retention=TaskRetentionRuntime(manager, TaskRetentionPolicy(grace_period_seconds=1.0)),
+        notification_router=TaskNotificationRouter(),
+    )
+
+    result = runtime.delegate(
+        DelegatedAgentInvocation(
+            prompt="background review",
+            run_in_background=True,
+            parent_session_id="sess_parent",
+        )
+    )
+    task_id = str(result["task_id"])
+    manager.await_task(task_id, timeout=2.0)
+
+    opened = runtime.open_view(task_id, "feishu:chat:viewed")
+    runtime.send_direct_view_input(
+        DirectViewInput(
+            recipient_id=str(result["agent"]["agent_id"]),
+            sender_id="leader",
+            content="focus current task",
+        )
+    )
+    inputs = runtime.read_direct_view_inputs(str(result["agent"]["agent_id"]))
+    runtime.close_view(task_id, "feishu:chat:viewed")
+    closed = runtime.project_view(task_id)
+
+    assert opened.retained is True
+    assert closed.retained is False
+    assert len(inputs) == 1
+    assert inputs[0]["recipient"]["recipient_id"] == result["agent"]["agent_id"]
 
 
 def test_conformance_sandbox_deny() -> None:

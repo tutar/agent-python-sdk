@@ -28,7 +28,7 @@
   - turn runtime
   - model providers
   - context assembly
-  - sub-agent coordination
+  - multi-agent coordination
   - task lifecycle
 - `session/`
   - transcript
@@ -107,14 +107,18 @@
   - task persistence / handles / events
   - output cursor / output slice
   - terminal notification / retention / eviction
-- `subagents/`
-  - sub-agent coordination
-  - verifier / reflection / delegated execution flows
+- `multi_agent/`
+  - delegated worker identity
+  - task-notification routing
+  - direct-view input routing
+  - viewed transcript projection
+  - local delegation facade
 
 这里的关键边界是：
 
-- task 和 sub-agent 编排都属于 `harness`
+- task 和 multi-agent 编排都属于 `harness`
 - 后续与 task 有关的代码应优先向 `harness/task/` 收敛
+- delegated worker routing/projection 应优先向 `harness/multi_agent/` 收敛
 - `runtime/` 是 harness 的主子域，但 provider、context、task 仍保持平级目录
 
 ## Stable Top-Level Boundaries
@@ -167,11 +171,15 @@
 - `observability/`
 - `host/`
 
-当前后续仍可继续细化的是：
+当前 `harness/multi_agent/` 已经覆盖本地 baseline：
 
-- `harness/subagents/`
-  - 目录职责已经确定
-  - 但更完整的 sub-agent coordination 代码还会继续向这里收敛
+- delegated subagent invocation
+- background delegation
+- task-notification routing
+- direct-view input
+- viewed transcript projection
+
+teammate execution 仍然不在当前实现范围内。
 
 当前 `harness/task/` 已经不再只是 background helper：
 
@@ -223,7 +231,7 @@
 - turn runtime
 - providers
 - context
-- sub-agent coordination
+- multi-agent coordination
 - task lifecycle
 
 都属于 `harness` 的职责范围。

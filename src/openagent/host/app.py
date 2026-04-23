@@ -21,8 +21,15 @@ from openagent.gateway import (
     create_wecom_host,
 )
 from openagent.gateway.channels.tui import _TerminalConnectionHandler, _ThreadingTCPServer
+from openagent.harness.multi_agent import LocalMultiAgentRuntime, TaskNotificationRouter
 from openagent.harness.providers import ProviderConfigurationError, load_model_from_env
 from openagent.harness.runtime.io import ModelProviderAdapter
+from openagent.harness.task import (
+    FileTaskManager,
+    LocalBackgroundAgentOrchestrator,
+    TaskRetentionPolicy,
+    TaskRetentionRuntime,
+)
 from openagent.host.config import OpenAgentHostConfig
 from openagent.host.demo import AdminTool, DemoModel, EchoTool
 from openagent.local import create_file_runtime, create_gateway_for_runtime
@@ -286,9 +293,22 @@ class OpenAgentHost:
         self._channel_threads.append(thread)
 
     def _default_tools(self) -> list[ToolDefinition]:
+        task_manager = FileTaskManager(
+            self.config.session_root,
+            retention_policy=TaskRetentionPolicy(),
+        )
+        multi_agent = LocalMultiAgentRuntime(
+            task_manager=task_manager,
+            background_orchestrator=LocalBackgroundAgentOrchestrator(task_manager),
+            retention=TaskRetentionRuntime(task_manager, TaskRetentionPolicy()),
+            notification_router=TaskNotificationRouter(),
+        )
         tools = cast(
             list[ToolDefinition],
-            create_builtin_toolset(root=self.config.workspace_root),
+            create_builtin_toolset(
+                root=self.config.workspace_root,
+                agent_handler=multi_agent.as_agent_handler(),
+            ),
         )
         tools.extend([EchoTool(), AdminTool()])
         return tools

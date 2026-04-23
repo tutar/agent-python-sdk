@@ -8,6 +8,7 @@
 - [Object Model](./object-model.md)
 - [Harness And Session](./harness-and-session.md)
 - [Context Engineering](./context-engineering.md)
+- [Multi-Agent](./multi-agent.md)
 - [Durable Memory](./durable-memory.md)
 - [Model Provider And Providers](./model-provider-and-providers.md)
 - [Tools And Capability Surface](./tools-and-capability-surface.md)
@@ -22,10 +23,11 @@
 2. `object-model`
 3. `harness-and-session`
 4. `context-engineering`
-5. `durable-memory`
-6. `model-provider-and-providers`
-7. `tools-and-capability-surface`
-8. `skills`
-9. `gateway-and-frontend`
-10. `agent-observability`
-11. `tasks-and-sandbox`
+5. `multi-agent`
+6. `durable-memory`
+7. `model-provider-and-providers`
+8. `tools-and-capability-surface`
+9. `skills`
+10. `gateway-and-frontend`
+11. `agent-observability`
+12. `tasks-and-sandbox`

@@ -467,12 +467,29 @@ class WebSearchTool(_BuiltinTool):
 
 
 class AgentTool(_BuiltinTool):
-    def __init__(self, handler: Callable[[dict[str, object]], dict[str, object]]) -> None:
+    def __init__(
+        self,
+        handler: Callable[[dict[str, object], ToolExecutionContext | None], JsonObject],
+    ) -> None:
         super().__init__(
             name="Agent",
             description_text="Spawn or delegate work to a sub-agent.",
             input_schema=_object_schema(
                 {
+                    "prompt": _string_property(
+                        "Alternate prompt field for delegated work.",
+                        examples=["Summarize the current session state"],
+                    ),
+                    "run_in_background": {
+                        "type": "boolean",
+                        "description": (
+                            "When true, detach execution into a background delegated task."
+                        ),
+                    },
+                    "agent_type": _string_property(
+                        "Optional delegated worker type label.",
+                        examples=["delegate", "reviewer"],
+                    ),
                     "task": _string_property(
                         "Task description to delegate to the sub-agent.",
                         examples=["Review the current diff for regressions"],
@@ -489,8 +506,7 @@ class AgentTool(_BuiltinTool):
         arguments: dict[str, object],
         context: ToolExecutionContext | None = None,
     ) -> ToolResult:
-        del context
-        outcome = self.handler(arguments)
+        outcome = self.handler(arguments, context)
         structured_outcome = cast(JsonObject, to_json_value(outcome))
         return ToolResult(
             tool_name=self.name,
@@ -593,7 +609,9 @@ def create_builtin_toolset(
     root: str = ".",
     web_fetch_backend: WebFetchBackend | None = None,
     web_search_backend: WebSearchBackend | Callable[[str], list[dict[str, object]]] | None = None,
-    agent_handler: Callable[[dict[str, object]], dict[str, object]] | None = None,
+    agent_handler: (
+        Callable[[dict[str, object], ToolExecutionContext | None], JsonObject] | None
+    ) = None,
     skill_bridge: SkillInvocationBridge | None = None,
 ) -> list[_BuiltinTool]:
     resolved_fetch_backend = web_fetch_backend or _default_web_fetch_backend()

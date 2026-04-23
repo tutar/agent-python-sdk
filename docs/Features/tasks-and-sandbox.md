@@ -20,6 +20,11 @@
 - file-backed task persistence
 - restart-safe task/handle recovery
 
+task 子域不再承担 multi-agent routing/projection。
+
+delegated worker identity、task notification、direct-view input、viewed transcript 现在属于
+`harness/multi_agent/`。
+
 ## Sandbox
 
 当前 sandbox 是本地 allowlist baseline。

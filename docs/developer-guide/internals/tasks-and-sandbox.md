@@ -21,6 +21,15 @@
 - terminal notification dedupe
 - local background agent execution
 
+multi-agent routing / projection 不再放在这里。
+
+这些语义已经收进 `harness/multi_agent/`：
+
+- delegated worker identity
+- task-notification routing
+- direct-view input
+- viewed transcript projection
+
 ## Why Local Task Handles Exist
 
 即使当前不做托管控制面，runtime 仍然需要表达：
