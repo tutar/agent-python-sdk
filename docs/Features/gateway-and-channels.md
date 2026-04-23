@@ -48,7 +48,9 @@ Feishu 是同一个 unified host 上的 chat channel。
   - completed
   - failed
   - interrupted
+- reply card 现在按 Card JSON 2.0 结构输出：`schema: "2.0"` + `body.elements`
 - reply card 会消费 `assistant_delta`，在同一张卡片上增量追加回复内容
+- reply 正文会按 Markdown block 拆成多个 card element，而不是把整段回复塞进单个文本块；这样可以减少段落空行在飞书里的展示异常
 - 为避免飞书远程更新过慢，Feishu 会按短时间窗口聚合多个 delta 再刷新卡片；终态会立即强制 flush
 - 审批卡片按钮：
   - approve

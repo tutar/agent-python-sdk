@@ -24,9 +24,10 @@ from openagent.gateway import (
 from openagent.gateway.channels.feishu.cards import (
     FeishuReplyCardRecord,
     FileFeishuCardDeliveryStore,
+    render_reply_card,
 )
 from openagent.harness.runtime import ModelStreamEvent, ModelTurnRequest, ModelTurnResponse
-from openagent.object_model import ToolResult
+from openagent.object_model import JsonObject, ToolResult
 from openagent.tools import (
     PermissionDecision,
     ToolCall,
@@ -67,6 +68,30 @@ class ToolThenReplyModel:
         return ModelTurnResponse(
             tool_calls=[ToolCall(tool_name="admin", arguments={"text": "rotate"})]
         )
+
+
+def _card_markdown_contents(card: JsonObject) -> list[str]:
+    body = card.get("body")
+    elements = (
+        body.get("elements", [])
+        if isinstance(body, dict)
+        else card.get("elements", [])
+    )
+    return [
+        str(element.get("content", ""))
+        for element in elements
+        if isinstance(element, dict) and element.get("tag") == "markdown"
+    ]
+
+
+def _card_elements(card: JsonObject) -> list[JsonObject]:
+    body = card.get("body")
+    elements = (
+        body.get("elements", [])
+        if isinstance(body, dict)
+        else card.get("elements", [])
+    )
+    return [element for element in elements if isinstance(element, dict)]
 
 
 @dataclass(slots=True)
@@ -553,8 +578,9 @@ def test_feishu_host_lazy_binds_and_replies(tmp_path: Path) -> None:
     assert outbound[-1]["delivery"] == "card"
     assert client.sent_cards[0]["chat_id"] == "oc_chat_1"
     latest_card = client.updated_cards[-1]["card"]
+    assert latest_card["schema"] == "2.0"
     assert latest_card["header"]["title"]["content"] == "OpenAgent · Completed"
-    assert "hello via feishu" in latest_card["elements"][0]["content"]
+    assert "hello via feishu" in "\n".join(_card_markdown_contents(latest_card))
     assert client.resolved_cards == [
         {
             "message_id": "card_message_1",
@@ -611,8 +637,9 @@ def test_feishu_host_supports_card_action_approval(tmp_path: Path) -> None:
 
     host.handle_event(make_text_event("admin rotate"))
     approval_card = client.updated_cards[-1]["card"]
+    assert approval_card["schema"] == "2.0"
     assert approval_card["header"]["title"]["content"] == "OpenAgent · Needs Approval"
-    actions = approval_card["elements"][-1]["actions"]
+    actions = _card_elements(approval_card)[-1]["actions"]
     assert actions[0]["text"]["content"] == "Approve"
     assert [item["text"]["content"] for item in actions] == ["Approve", "Reject"]
 
@@ -636,8 +663,100 @@ def test_feishu_host_supports_card_action_approval(tmp_path: Path) -> None:
 
     assert result == {"toast": {"type": "info", "content": "Action received."}}
     final_card = client.updated_cards[-1]["card"]
+    assert final_card["schema"] == "2.0"
     assert final_card["header"]["title"]["content"] == "OpenAgent · Completed"
-    assert "tool completed after approval" in final_card["elements"][0]["content"]
+    assert "tool completed after approval" in "\n".join(_card_markdown_contents(final_card))
+
+
+def test_feishu_reply_card_uses_single_newline_between_sections() -> None:
+    card = render_reply_card(
+        FeishuReplyCardRecord(
+            request_message_id="om_request",
+            session_id="sess",
+            conversation_id="feishu:chat:oc_chat_1",
+            chat_id="oc_chat_1",
+            prompt_text="介绍下自己啊",
+            status="completed",
+            status_message="Completed.",
+            assistant_message="第一行\n第二行",
+        )
+    )
+
+    assert card["schema"] == "2.0"
+    contents = _card_markdown_contents(card)
+    assert contents[:3] == ["**Request**", "介绍下自己啊", "**Status**"]
+    assert "**Reply**" in contents
+    assert not any("\n\n" in item for item in contents)
+
+
+def test_feishu_reply_card_collapses_blank_lines_inside_reply_markdown() -> None:
+    card = render_reply_card(
+        FeishuReplyCardRecord(
+            request_message_id="om_request",
+            session_id="sess",
+            conversation_id="feishu:chat:oc_chat_1",
+            chat_id="oc_chat_1",
+            prompt_text="介绍下自己啊",
+            status="completed",
+            status_message="Completed.",
+            assistant_message="在本地工作空间中执行实际任务**。\n\n## 我的身份",
+        )
+    )
+
+    assert card["schema"] == "2.0"
+    contents = _card_markdown_contents(card)
+    assert "在本地工作空间中执行实际任务**。\n\n## 我的身份" not in "\n".join(contents)
+    assert "在本地工作空间中执行实际任务**。" in contents
+    assert "## 我的身份" in contents
+
+
+def test_feishu_reply_card_normalizes_literal_backslash_n_sequences() -> None:
+    card = render_reply_card(
+        FeishuReplyCardRecord(
+            request_message_id="om_request",
+            session_id="sess",
+            conversation_id="feishu:chat:oc_chat_1",
+            chat_id="oc_chat_1",
+            prompt_text="介绍下自己啊",
+            status="completed",
+            status_message="Completed.",
+            assistant_message=(
+                "基于 `agent-spec` 标准，提供统一的多通道交互能力"
+                "\\n\\n## 我的核心能力"
+            ),
+        )
+    )
+
+    assert card["schema"] == "2.0"
+    contents = _card_markdown_contents(card)
+    rendered = "\n".join(contents)
+    assert "\\n\\n## 我的核心能力" not in rendered
+    assert "基于 `agent-spec` 标准，提供统一的多通道交互能力" in contents
+    assert "## 我的核心能力" in contents
+
+
+def test_feishu_reply_card_uses_card_json_v2_body_elements() -> None:
+    card = render_reply_card(
+        FeishuReplyCardRecord(
+            request_message_id="om_request",
+            session_id="sess",
+            conversation_id="feishu:chat:oc_chat_1",
+            chat_id="oc_chat_1",
+            prompt_text="介绍下自己啊",
+            status="completed",
+            status_message="Completed.",
+            assistant_message="### 使用示例\n- a\n- b",
+        )
+    )
+
+    assert card["schema"] == "2.0"
+    assert "body" in card
+    body = card["body"]
+    assert isinstance(body, dict)
+    assert body["direction"] == "vertical"
+    elements = _card_elements(card)
+    assert [element["tag"] for element in elements[:3]] == ["markdown", "markdown", "markdown"]
+    assert "### 使用示例" in _card_markdown_contents(card)
 
 
 def test_feishu_host_routes_management_commands_without_session_binding(tmp_path: Path) -> None:
@@ -694,7 +813,7 @@ def test_feishu_adapter_coalesces_tool_progress_notifications(tmp_path: Path) ->
 
     assert len(progress_messages) >= 1
     assert any(
-        "Tool stream is working..." in item["card"]["elements"][0]["content"]
+        "Tool stream is working..." in "\n".join(_card_markdown_contents(item["card"]))
         for item in client.updated_cards
     )
 
@@ -755,8 +874,9 @@ def test_feishu_host_card_action_uses_card_record_session_id(tmp_path: Path) -> 
 
     assert result == {"toast": {"type": "info", "content": "Action received."}}
     final_card = client.updated_cards[-1]["card"]
+    assert final_card["schema"] == "2.0"
     assert final_card["header"]["title"]["content"] == "OpenAgent · Completed"
-    assert "tool completed after approval" in final_card["elements"][0]["content"]
+    assert "tool completed after approval" in "\n".join(_card_markdown_contents(final_card))
 
 
 def test_feishu_host_card_action_surfaces_runtime_error_when_requires_action_is_gone(

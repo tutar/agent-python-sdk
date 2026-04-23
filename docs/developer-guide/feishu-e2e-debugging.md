@@ -130,6 +130,8 @@ uv run openagent-host
 - 归一化消息并注入 gateway
 - 将 agent 的单 turn reply card 回写到飞书；优先走 CardKit 流式更新，必要时降级为对同一张消息卡片做 patch 更新
 - 消费 `assistant_delta`，在同一张 reply card 上持续追加回复正文
+- reply 正文会按 Markdown block 拆成多个 card element，避免把整段 Markdown 通过一个大文本块直接塞给飞书
+- reply card 顶层结构与官方 Card JSON 2.0 对齐：`schema: "2.0"` + `body.elements`
 
 ## Find The Target Contact
 
