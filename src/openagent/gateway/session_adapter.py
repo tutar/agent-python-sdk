@@ -42,7 +42,8 @@ class InProcessSessionAdapter:
         session = self._runtime.sessions.load_session(session_id)
         if getattr(session, "agent_id", None) is None:
             session.agent_id = self._agent_id
-            self._runtime.sessions.save_session(session_id, session)
+        self._runtime.ensure_session_workspace(session_id, session)
+        self._runtime.sessions.save_session(session_id, session)
         self._runtime.sessions.acquire_lease(
             session_id,
             harness_instance.harness_instance_id,

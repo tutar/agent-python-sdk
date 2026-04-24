@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, field
+from pathlib import Path
 from time import perf_counter
 from typing import cast
 
@@ -75,6 +77,14 @@ from openagent.session import (
     SessionStore,
 )
 from openagent.session.short_term_memory import ShortTermMemoryStore, ShortTermSessionMemory
+from openagent.shared import (
+    DEFAULT_AGENT_DIRECTORY,
+    ensure_subagent_workspace,
+    write_subagent_ref,
+)
+from openagent.shared import (
+    ensure_session_workspace as ensure_session_workspace_dir,
+)
 from openagent.tools import (
     ToolCall,
     ToolCancelledError,
@@ -106,6 +116,11 @@ class SimpleHarness(Harness):
     instruction_markdown_loader: InstructionMarkdownLoader = field(
         default_factory=InstructionMarkdownLoader
     )
+    workspace_root: str = field(default_factory=os.getcwd)
+    session_root_dir: str | None = None
+    openagent_root: str | None = None
+    agent_root_dir: str | None = None
+    role_id: str | None = None
     runtime_loop: AgentRuntime = field(init=False, repr=False)
     hook_runtime: HookRuntime = field(default_factory=HookRuntime)
     post_turn_registry: PostTurnRegistry = field(default_factory=PostTurnRegistry)
@@ -145,6 +160,12 @@ class SimpleHarness(Harness):
         approved: bool,
     ) -> tuple[list[RuntimeEvent], TerminalState]:
         return self.runtime_loop.continue_turn(session_handle, approved)
+
+    @property
+    def parent_agent_ref(self) -> str:
+        if isinstance(self.role_id, str) and self.role_id.strip():
+            return f"agent_{self.role_id.strip()}"
+        return DEFAULT_AGENT_DIRECTORY
 
     def build_model_input(
         self,
@@ -326,9 +347,56 @@ class SimpleHarness(Harness):
     def route_tool_call(self, tool_call: ToolCall) -> ToolResult:
         result = self.executor.run_tools(
             [tool_call],
-            ToolExecutionContext(session_id="ad_hoc"),
+            ToolExecutionContext(
+                session_id="ad_hoc",
+                working_directory=str(Path(self.workspace_root).resolve()),
+            ),
         )
         return result[0]
+
+    def ensure_session_workspace(self, session_handle: str, session: SessionRecord) -> str:
+        metadata = dict(session.metadata or {})
+        existing = metadata.get("workdir")
+        if isinstance(existing, str) and existing:
+            workdir = str(Path(existing).resolve())
+            Path(workdir).mkdir(parents=True, exist_ok=True)
+        elif self.session_root_dir is not None:
+            workdir = ensure_session_workspace_dir(self.session_root_dir, session_handle)
+            metadata["workdir"] = workdir
+            session.metadata = metadata
+        else:
+            workdir = str(Path(self.workspace_root).resolve())
+            metadata["workdir"] = workdir
+            session.metadata = metadata
+        return workdir
+
+    def prepare_delegated_agent_workspace(
+        self,
+        delegated_agent_id: str,
+        parent_session_id: str | None,
+        metadata: JsonObject | None = None,
+    ) -> str:
+        if self.agent_root_dir is None:
+            return str(Path(self.workspace_root).resolve())
+        parent_workspace: str | None = None
+        if parent_session_id is not None:
+            parent_session = self.sessions.load_session(parent_session_id)
+            if isinstance(parent_session, SessionRecord):
+                parent_workspace = self.ensure_session_workspace(parent_session_id, parent_session)
+                self._persist_session(parent_session_id, parent_session)
+        workspace = ensure_subagent_workspace(
+            self.agent_root_dir,
+            delegated_agent_id,
+            parent_workspace=parent_workspace,
+        )
+        write_subagent_ref(
+            self.agent_root_dir,
+            delegated_agent_id,
+            parent_session_id=parent_session_id,
+            workspace=workspace,
+            metadata=dict(metadata) if metadata is not None else None,
+        )
+        return workspace
 
     def _new_session_message(self, role: str, content: str) -> SessionMessage:
         return SessionMessage(role=role, content=content)

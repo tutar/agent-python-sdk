@@ -30,9 +30,11 @@ class DelegatedAgentInvocation(SerializableModel):
 class DelegatedAgentIdentity(SerializableModel):
     agent_id: str
     agent_type: str
+    parent_agent_ref: str | None = None
     parent_session_id: str | None = None
     invoking_request_id: str | None = None
     invocation_kind: str = "spawn"
+    workspace: str | None = None
 
 
 @dataclass(slots=True)

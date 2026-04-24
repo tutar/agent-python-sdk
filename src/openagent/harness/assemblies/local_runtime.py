@@ -25,7 +25,13 @@ from openagent.harness.task import (
 from openagent.object_model import JsonObject
 from openagent.observability import AgentObservability
 from openagent.session import FileSessionStore, InMemorySessionStore
-from openagent.shared import normalize_workspace_root
+from openagent.shared import (
+    normalize_openagent_root,
+    normalize_workspace_root,
+    resolve_agent_root,
+    resolve_agent_root_from_session_root,
+    resolve_path_env,
+)
 from openagent.tools import (
     SimpleToolExecutor,
     StaticToolRegistry,
@@ -40,6 +46,8 @@ def create_in_memory_runtime_assembly(
     tools: list[ToolDefinition] | None = None,
     observability: AgentObservability | None = None,
     workspace_root: str | None = None,
+    openagent_root: str | None = None,
+    role_id: str | None = None,
 ) -> SimpleHarness:
     task_manager = InMemoryTaskManager(retention_policy=TaskRetentionPolicy())
     multi_agent = LocalMultiAgentRuntime(
@@ -55,7 +63,7 @@ def create_in_memory_runtime_assembly(
             agent_handler=multi_agent.as_agent_handler(),
         )
     )
-    return SimpleHarness(
+    harness = SimpleHarness(
         model=model,
         sessions=InMemorySessionStore(),
         tools=registry,
@@ -63,7 +71,15 @@ def create_in_memory_runtime_assembly(
         context_governance=ContextGovernance(),
         observability=observability,
         model_io_capture=NoOpModelIoCapture(),
+        workspace_root=_default_workspace_root(workspace_root),
+        openagent_root=_default_openagent_root(openagent_root),
+        agent_root_dir=_default_agent_root(openagent_root, role_id),
     )
+    multi_agent.configure_workspace_runtime(
+        harness.prepare_delegated_agent_workspace,
+        parent_agent_ref=harness.parent_agent_ref,
+    )
+    return harness
 
 
 def create_file_runtime_assembly(
@@ -73,9 +89,12 @@ def create_file_runtime_assembly(
     observability: AgentObservability | None = None,
     workspace_root: str | None = None,
     model_io_root: str | None = None,
+    openagent_root: str | None = None,
+    role_id: str | None = None,
 ) -> SimpleHarness:
+    agent_root = resolve_agent_root_from_session_root(session_root)
     task_manager = FileTaskManager(
-        session_root,
+        str(os.path.join(agent_root, "tasks")),
         retention_policy=TaskRetentionPolicy(),
     )
     multi_agent = LocalMultiAgentRuntime(
@@ -91,7 +110,7 @@ def create_file_runtime_assembly(
             agent_handler=multi_agent.as_agent_handler(),
         )
     )
-    return SimpleHarness(
+    harness = SimpleHarness(
         model=model,
         sessions=FileSessionStore(session_root),
         tools=registry,
@@ -99,7 +118,17 @@ def create_file_runtime_assembly(
         context_governance=ContextGovernance(storage_dir=session_root),
         observability=observability,
         model_io_capture=FileModelIoCapture(_default_model_io_root(session_root, model_io_root)),
+        workspace_root=_default_workspace_root(workspace_root),
+        session_root_dir=session_root,
+        openagent_root=_default_openagent_root(openagent_root),
+        agent_root_dir=agent_root,
+        role_id=role_id,
     )
+    multi_agent.configure_workspace_runtime(
+        harness.prepare_delegated_agent_workspace,
+        parent_agent_ref=harness.parent_agent_ref,
+    )
+    return harness
 
 
 def create_gateway_for_runtime_assembly(
@@ -152,13 +181,27 @@ def _default_workspace_root(workspace_root: str | None) -> str:
     )
 
 
+def _default_openagent_root(openagent_root: str | None) -> str:
+    return normalize_openagent_root(
+        openagent_root,
+        default=os.getenv("OPENAGENT_ROOT", ".openagent"),
+    )
+
+
+def _default_agent_root(openagent_root: str | None, role_id: str | None) -> str:
+    return resolve_agent_root(
+        _default_openagent_root(openagent_root),
+        role_id or os.getenv("OPENAGENT_ROLE_ID"),
+    )
+
+
 def _default_model_io_root(session_root: str, model_io_root: str | None) -> str:
     if model_io_root is not None:
         return model_io_root
-    if os.getenv("OPENAGENT_MODEL_IO_ROOT") is not None:
-        return str(os.getenv("OPENAGENT_MODEL_IO_ROOT"))
-    if os.getenv("OPENAGENT_DATA_ROOT") is not None:
-        return str(os.path.join(str(os.getenv("OPENAGENT_DATA_ROOT")), "model-io"))
+    if resolved_model_io_root := resolve_path_env("OPENAGENT_MODEL_IO_ROOT"):
+        return resolved_model_io_root
+    if resolved_data_root := resolve_path_env("OPENAGENT_DATA_ROOT"):
+        return str(os.path.join(resolved_data_root, "model-io"))
     session_path = os.path.abspath(session_root)
     session_dir = os.path.basename(session_path)
     parent_dir = os.path.basename(os.path.dirname(session_path))

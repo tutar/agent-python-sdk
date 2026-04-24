@@ -90,7 +90,7 @@ WeChat private chat
 - `src/openagent/gateway/channels/wechat/host.py`：启动 SDK、去重、allowlist、session binding 和回复分发。
 - `src/openagent/gateway/channels/wechat/dedupe.py`：内存和文件型入站消息去重。
 - `src/openagent/gateway/channels/wechat/assembly.py`：配置、runtime、gateway 和 host 组装。
-- `src/openagent/host/app.py`：统一 host 的 `/channel wechat` 和 `/channel-config wechat ...` 管理入口。
+- `src/openagent/gateway/assemblies/channel_manager.py`：统一 host 的 `/channel wechat` 和 `/channel-config wechat ...` 管理入口，以及 channel config resolve / host startup。
 
 ## Tests
 

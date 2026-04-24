@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from openagent.harness.runtime import ModelTurnRequest, ModelTurnResponse
-from openagent.local import create_in_memory_runtime
+from openagent.local import create_file_runtime, create_in_memory_runtime
 from openagent.object_model import RuntimeEventType
 from openagent.session import (
     FileSessionStore,
@@ -114,3 +114,18 @@ def test_file_session_store_appends_event_log(tmp_path: Path) -> None:
     assert all_events[-1].event_type is RuntimeEventType.TURN_COMPLETED
     assert resumed.working_state["event_count"] == len(all_events)
     assert restored_record.restore_marker == first_checkpoint.last_event_id
+
+
+def test_file_runtime_assigns_session_workspace_under_session_root(tmp_path: Path) -> None:
+    runtime = create_file_runtime(
+        model=ScriptedModel([ModelTurnResponse(assistant_message="ok")]),
+        session_root=str(tmp_path / "agent_default" / "sessions"),
+    )
+
+    runtime.run_turn("hello", "sess_workspace")
+    session = runtime.sessions.load_session("sess_workspace")
+
+    assert session.metadata["workdir"] == str(
+        (tmp_path / "agent_default" / "sessions" / "sess_workspace" / "workspace").resolve()
+    )
+    assert Path(str(session.metadata["workdir"])).is_dir()

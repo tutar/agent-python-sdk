@@ -30,9 +30,9 @@ def _start_host(tmp_path: Path) -> tuple[Popen[str], int]:
     env["OPENAGENT_TERMINAL_PORT"] = str(terminal_port)
     env["OPENAGENT_SESSION_ROOT"] = str(tmp_path / "sessions")
     env["OPENAGENT_BINDING_ROOT"] = str(tmp_path / "bindings")
-    env["PYTHONPATH"] = str(repo_root / "src")
+    env["PYTHONPATH"] = os.pathsep.join([str(repo_root / "src"), str(repo_root)])
     process = Popen(
-        [sys.executable, "-m", "openagent.cli"],
+        [sys.executable, str(repo_root / "tests/gateway/support/terminal_client_host.py")],
         stdin=PIPE,
         stdout=PIPE,
         stderr=PIPE,

@@ -3,18 +3,41 @@ from typing import cast
 
 import pytest
 
+from openagent.harness.providers import ProviderConfigurationError
+from openagent.harness.runtime.io import (
+    ModelProviderExchange,
+    ModelTurnRequest,
+    ModelTurnResponse,
+)
 from openagent.host import OpenAgentHost, OpenAgentHostConfig
 from openagent.object_model import JsonValue
 
 
+class StubHostModel:
+    provider_family = "test"
+
+    def generate(self, request: ModelTurnRequest) -> ModelTurnResponse:
+        return self.generate_with_exchange(request).response
+
+    def generate_with_exchange(self, request: ModelTurnRequest) -> ModelProviderExchange:
+        del request
+        return ModelProviderExchange(response=ModelTurnResponse(assistant_message="ok"))
+
+
 def build_host(tmp_path: Path) -> OpenAgentHost:
+    agent_root = tmp_path / "agent_default"
     return OpenAgentHost(
         OpenAgentHostConfig(
-            session_root=str(tmp_path / "sessions"),
-            binding_root=str(tmp_path / "bindings"),
+            openagent_root=str(tmp_path),
+            agent_root=str(agent_root),
+            session_root=str(agent_root / "sessions"),
+            binding_root=str(agent_root / "bindings"),
+            data_root=str(agent_root / "data"),
+            model_io_root=str(agent_root / "data" / "model-io"),
             terminal_host="127.0.0.1",
             terminal_port=8765,
-        )
+        ),
+        model=StubHostModel(),
     )
 
 
@@ -55,7 +78,11 @@ def test_channel_config_and_load_feishu_are_process_local(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     host = build_host(tmp_path)
-    monkeypatch.setattr(host, "_load_feishu_channel", lambda: None)
+    monkeypatch.setattr(
+        host._channel_manager,
+        "ensure_channel_loaded",
+        lambda channel: host._channel_manager.loaded_channels.add(channel),
+    )
 
     store_app = host.handle_management_command("/channel-config feishu app_id cli_app")
     store_secret = host.handle_management_command(
@@ -76,7 +103,11 @@ def test_channel_config_and_load_wechat_are_process_local(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     host = build_host(tmp_path)
-    monkeypatch.setattr(host, "_load_wechat_channel", lambda: None)
+    monkeypatch.setattr(
+        host._channel_manager,
+        "ensure_channel_loaded",
+        lambda channel: host._channel_manager.loaded_channels.add(channel),
+    )
 
     store_base_url = host.handle_management_command(
         "/channel-config wechat base_url https://example.test"
@@ -119,7 +150,11 @@ def test_channel_config_and_load_wecom_are_process_local(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     host = build_host(tmp_path)
-    monkeypatch.setattr(host, "_load_wecom_channel", lambda: None)
+    monkeypatch.setattr(
+        host._channel_manager,
+        "ensure_channel_loaded",
+        lambda channel: host._channel_manager.loaded_channels.add(channel),
+    )
 
     store_bot = host.handle_management_command("/channel-config wecom bot_id bot_1")
     store_secret = host.handle_management_command("/channel-config wecom secret secret_1")
@@ -139,3 +174,65 @@ def test_channel_config_and_load_wecom_are_process_local(
     assert loaded[0]["message"] == "wecom channel loaded"
     loaded_channels = cast(list[JsonValue], host.describe_channels()["loaded"])
     assert "wecom" in loaded_channels
+
+
+def test_host_config_from_env_expands_openagent_root_references(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("OPENAGENT_ROOT", str(tmp_path / ".openagent"))
+    monkeypatch.setenv("OPENAGENT_HOST_ROOT", "${OPENAGENT_ROOT}/agent_default")
+    monkeypatch.setenv("OPENAGENT_SESSION_ROOT", "${OPENAGENT_HOST_ROOT}/sessions")
+    monkeypatch.setenv("OPENAGENT_BINDING_ROOT", "${OPENAGENT_HOST_ROOT}/bindings")
+    monkeypatch.setenv("OPENAGENT_DATA_ROOT", "${OPENAGENT_HOST_ROOT}/data")
+    monkeypatch.setenv("OPENAGENT_MODEL_IO_ROOT", "${OPENAGENT_DATA_ROOT}/model-io")
+    monkeypatch.setenv("OPENAGENT_WORKSPACE_ROOT", "$PWD")
+
+    config = OpenAgentHostConfig.from_env()
+
+    expected_root = (tmp_path / ".openagent").resolve()
+    expected_host_root = (expected_root / "agent_default").resolve()
+    assert Path(config.openagent_root) == expected_root
+    assert Path(config.agent_root) == expected_host_root
+    assert Path(config.session_root) == (expected_host_root / "sessions").resolve()
+    assert Path(config.binding_root) == (expected_host_root / "bindings").resolve()
+    assert Path(config.data_root) == (expected_host_root / "data").resolve()
+    assert Path(config.model_io_root) == (expected_host_root / "data" / "model-io").resolve()
+
+
+def test_host_requires_model_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("OPENAGENT_MODEL", raising=False)
+    monkeypatch.delenv("OPENAGENT_BASE_URL", raising=False)
+    monkeypatch.delenv("OPENAGENT_PROVIDER", raising=False)
+
+    with pytest.raises(ProviderConfigurationError) as exc:
+        OpenAgentHost(
+            OpenAgentHostConfig(
+                openagent_root=str(tmp_path),
+                agent_root=str(tmp_path / "agent_default"),
+                session_root=str(tmp_path / "agent_default" / "sessions"),
+                binding_root=str(tmp_path / "agent_default" / "bindings"),
+            )
+        )
+
+    assert "OPENAGENT_MODEL is required" in str(exc.value)
+
+
+def test_host_channel_manager_uses_agent_root_for_feishu_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAGENT_FEISHU_APP_ID", "app")
+    monkeypatch.setenv("OPENAGENT_FEISHU_APP_SECRET", "secret")
+    host = build_host(tmp_path)
+
+    config = host._channel_manager._resolve_feishu_config()  # type: ignore[attr-defined]
+
+    assert Path(config.session_root) == (tmp_path / "agent_default" / "sessions").resolve()
+    assert Path(config.binding_root) == (tmp_path / "agent_default" / "bindings").resolve()
+    assert Path(config.card_state_root) == (
+        tmp_path / "agent_default" / "cards" / "feishu"
+    ).resolve()

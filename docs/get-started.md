@@ -42,6 +42,9 @@ mypy .
 最小启动方式：
 
 ```bash
+export OPENAGENT_PROVIDER=openai
+export OPENAGENT_MODEL=unsloth/Qwen3.5-9B-GGUF
+export OPENAGENT_BASE_URL=http://127.0.0.1:8001
 export OPENAGENT_WORKSPACE_ROOT=$PWD
 uv run openagent-host
 ```
@@ -57,8 +60,8 @@ openagent-host
 - host 会启动 `terminal` channel 对应的本地 TUI transport
 - 不预加载任何外部 channel
 - `terminal` channel 会在 TUI 首次连接时自动加载
-- 如果没有配置真实模型，会自动回退到 demo model
-- host 会打印 `openagent-host> model=...`，可直接确认当前是否真的接上了真实模型
+- host 必须在启动前配置真实模型；缺少 `OPENAGENT_MODEL` 或 `OPENAGENT_BASE_URL` 会直接报错并提示配置方式
+- host 会打印 `openagent-host> model=...`，可直接确认当前接上的 provider/model
 - 每次模型调用默认都会沉淀到 `.openagent/data/model-io`
 
 ## Quickstart 2: Connect The Terminal TUI

@@ -176,7 +176,7 @@ WeCom private chat
 - `src/openagent/gateway/channels/wecom/host.py`：启动 client、去重、allowlist、session binding 和回复分发。
 - `src/openagent/gateway/channels/wecom/dedupe.py`：内存和文件型入站消息去重。
 - `src/openagent/gateway/channels/wecom/assembly.py`：配置、runtime、gateway 和 host 组装。
-- `src/openagent/host/app.py`：统一 host 的 `/channel wecom` 和 `/channel-config wecom ...` 管理入口。
+- `src/openagent/gateway/assemblies/channel_manager.py`：统一 host 的 `/channel wecom` 和 `/channel-config wecom ...` 管理入口，以及 channel config resolve / host startup。
 
 ## Tests
 

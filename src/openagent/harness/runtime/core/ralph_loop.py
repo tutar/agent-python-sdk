@@ -60,6 +60,7 @@ class RalphLoop:
             raise TypeError("SimpleHarness requires SessionRecord-compatible session state")
         if session.status is not SessionStatus.REQUIRES_ACTION or not session.pending_tool_calls:
             raise ValueError("Session has no pending requires_action continuation")
+        working_directory = self.harness.ensure_session_workspace(session_handle, session)
         interaction_span = observability.start_span(
             "interaction",
             {"continuation": True, "approved": approved},
@@ -111,6 +112,8 @@ class RalphLoop:
             context=ToolExecutionContext(
                 session_id=session_handle,
                 approved_tool_names=[tool_call.tool_name for tool_call in pending_calls],
+                working_directory=working_directory,
+                agent_id=session.agent_id,
             ),
         )
         emitted_events.extend(tool_events)
@@ -239,6 +242,7 @@ class RalphLoop:
         session = self.harness.sessions.load_session(session_handle)
         if not isinstance(session, SessionRecord):
             raise TypeError("SimpleHarness requires SessionRecord-compatible session state")
+        working_directory = self.harness.ensure_session_workspace(session_handle, session)
         interaction_span = observability.start_span(
             "interaction",
             {"input_preview": input[:80]},
@@ -477,7 +481,11 @@ class RalphLoop:
                     session=session,
                     session_handle=session_handle,
                     tool_calls=handled.tool_calls,
-                    context=ToolExecutionContext(session_id=session_handle),
+                    context=ToolExecutionContext(
+                        session_id=session_handle,
+                        agent_id=session.agent_id,
+                        working_directory=working_directory,
+                    ),
                 )
                 yield from tool_events
             except RequiresActionError as exc:

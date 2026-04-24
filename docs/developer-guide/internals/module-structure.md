@@ -54,6 +54,7 @@
   - frontend / channel integration boundary
   - bindings
   - projection
+  - channel-oriented assembly helpers
 - `observability/`
   - observability facade
   - normalized observability models
@@ -145,6 +146,7 @@
 
 - 负责 frontend / channel 接入
 - 负责 binding、inbound normalization、egress projection
+- channel-specific config resolve / host startup 应优先放在 `gateway/assemblies/`
 - 目录上继续保留顶层，不要求强行并进 `harness/`
 - 但职责判断上应始终视为 runtime 的接入边界，而不是独立业务域
 
@@ -185,12 +187,13 @@
 - `cli.py`
   - 顶层 CLI 入口
   - 不视为业务子域
-- `host/service.py`
-  - compatibility export
-  - 真实 host 实现应在 `host/` 子模块中维护
 - `gateway/assemblies/feishu.py`
   - compatibility export
   - Feishu-specific assembly 应继续在 channel 子包旁维护
+- `gateway/assemblies/channel_manager.py`
+  - host-facing channel registry / startup helper
+  - 负责 channel spec、config resolve、host startup
+  - 不属于 `Gateway` core 本身
 
 ## Current Codebase Status
 

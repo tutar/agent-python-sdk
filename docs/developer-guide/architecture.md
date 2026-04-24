@@ -80,7 +80,8 @@
 - `host`
   - host app
   - startup surface
-  - local transport and channel loading
+  - local transport
+  - channel manager entrypoint over `gateway/assemblies`
 - `shared`
   - shared version helpers
 - `cli.py`

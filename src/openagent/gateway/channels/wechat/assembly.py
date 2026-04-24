@@ -15,7 +15,12 @@ from openagent.harness.runtime.core.agent_runtime import SimpleHarness
 from openagent.harness.runtime.io import ModelProviderAdapter
 from openagent.object_model import JsonObject
 from openagent.observability import AgentObservability
-from openagent.shared import normalize_workspace_root
+from openagent.shared import (
+    normalize_openagent_root,
+    normalize_workspace_root,
+    resolve_agent_root,
+    resolve_path_env,
+)
 from openagent.tools import ToolDefinition
 
 from .adapter import WechatChannelAdapter
@@ -29,24 +34,31 @@ class WechatAppConfig:
     """Configuration for the WeChat private-chat SDK channel."""
 
     base_url: str = "https://ilinkai.weixin.qq.com"
+    openagent_root: str = str(Path(".openagent"))
+    agent_root: str = str(Path(".openagent") / "agent_default")
     cred_path: str = str(Path(".openagent") / "wechat" / "credentials.json")
-    session_root: str = str(Path(".openagent") / "wechat" / "sessions")
-    binding_root: str = str(Path(".openagent") / "wechat" / "sessions" / "bindings")
+    session_root: str = str(Path(".openagent") / "agent_default" / "sessions")
+    binding_root: str = str(Path(".openagent") / "agent_default" / "bindings")
     allowed_senders: tuple[str, ...] = ()
     workspace_root: str = field(default_factory=os.getcwd)
 
     @classmethod
     def from_env(cls) -> WechatAppConfig:
-        session_root = os.getenv(
+        openagent_root = normalize_openagent_root(os.getenv("OPENAGENT_ROOT"))
+        role_id = os.getenv("OPENAGENT_ROLE_ID")
+        agent_root = resolve_agent_root(openagent_root, role_id)
+        session_root = resolve_path_env(
             "OPENAGENT_SESSION_ROOT",
-            str(Path(".openagent") / "wechat" / "sessions"),
-        )
-        binding_root = os.getenv(
+            str(Path(agent_root) / "sessions"),
+        ) or str(Path(agent_root) / "sessions")
+        binding_root = resolve_path_env(
             "OPENAGENT_BINDING_ROOT",
-            str(Path(session_root) / "bindings"),
-        )
+            str(Path(agent_root) / "bindings"),
+        ) or str(Path(agent_root) / "bindings")
         return cls(
             base_url=os.getenv("OPENAGENT_WECHAT_BASE_URL", "https://ilinkai.weixin.qq.com"),
+            openagent_root=openagent_root,
+            agent_root=agent_root,
             cred_path=os.getenv(
                 "OPENAGENT_WECHAT_CRED_PATH",
                 str(Path(".openagent") / "wechat" / "credentials.json"),

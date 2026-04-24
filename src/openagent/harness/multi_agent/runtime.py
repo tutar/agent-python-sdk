@@ -30,6 +30,8 @@ class LocalMultiAgentRuntime:
     background_orchestrator: LocalBackgroundAgentOrchestrator
     retention: TaskRetentionRuntime
     notification_router: TaskNotificationRouter
+    parent_agent_ref: str = "agent_default"
+    _workspace_preparer: Callable[[str, str | None, JsonObject | None], str] | None = None
     _delegation: LocalDelegationRuntime | None = None
     _projection: ViewedTranscriptProjector | None = None
 
@@ -37,8 +39,28 @@ class LocalMultiAgentRuntime:
         self._delegation = LocalDelegationRuntime(self.background_orchestrator)
         self._projection = ViewedTranscriptProjector(self.task_manager, self.retention)
 
+    def configure_workspace_runtime(
+        self,
+        workspace_preparer: Callable[[str, str | None, JsonObject | None], str],
+        *,
+        parent_agent_ref: str,
+    ) -> None:
+        self._workspace_preparer = workspace_preparer
+        self.parent_agent_ref = parent_agent_ref
+
     def delegate(self, invocation: DelegatedAgentInvocation) -> JsonObject:
         identity = build_delegated_identity(invocation)
+        identity.parent_agent_ref = self.parent_agent_ref
+        if self._workspace_preparer is not None:
+            identity.workspace = self._workspace_preparer(
+                identity.agent_id,
+                invocation.parent_session_id,
+                {
+                    "agent_type": identity.agent_type,
+                    "parent_agent_ref": self.parent_agent_ref,
+                    "invoking_request_id": identity.invoking_request_id,
+                },
+            )
         assert self._delegation is not None
         if invocation.run_in_background:
             return self._delegation.delegate_background(invocation, identity)

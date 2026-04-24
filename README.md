@@ -1,6 +1,6 @@
 # OpenAgent
 
-OpenAgent is a local-first Python agent project organized around `agent-spec`.
+OpenAgent is a local-first Python agent project.
 
 It focuses on a unified Python host, multi-channel interaction, builtin tools, durable local state, and a codebase that stays close to the spec’s module boundaries without introducing unnecessary distributed complexity.
 
@@ -20,6 +20,10 @@ Run these commands from the repository root.
 Start the host:
 
 ```bash
+export OPENAGENT_ROOT=.openagent
+export OPENAGENT_PROVIDER=openai
+export OPENAGENT_MODEL=unsloth/Qwen3.5-9B-GGUF
+export OPENAGENT_BASE_URL=http://127.0.0.1:8001
 export OPENAGENT_WORKSPACE_ROOT=$PWD
 uv run openagent-host
 ```

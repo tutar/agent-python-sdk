@@ -19,6 +19,7 @@ from openagent.tools.web import (
     WebFetchBackendError,
     WebSearchBackendError,
 )
+from openagent.tools.web import transport as transport_module
 
 
 class FakeTransport:
@@ -181,6 +182,26 @@ def test_firecrawl_webfetch_backend_summarizes_scrape_failure() -> None:
     assert str(exc.value) == (
         "Firecrawl could not retrieve the page content. "
         "The page may block automated access, require authentication, or be unavailable."
+    )
+
+
+def test_urllib_web_backend_transport_bypasses_proxy_for_loopback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:7890")
+    monkeypatch.setenv("http_proxy", "http://127.0.0.1:7890")
+    assert transport_module._should_bypass_proxy("http://127.0.0.1:3002/v2/search") is True
+    assert transport_module._should_bypass_proxy("http://localhost:3002/v2/search") is True
+
+
+def test_urllib_web_backend_transport_keeps_proxy_for_non_loopback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:7890")
+    monkeypatch.setenv("http_proxy", "http://127.0.0.1:7890")
+    assert (
+        transport_module._should_bypass_proxy("https://docs.firecrawl.dev/features/search")
+        is False
     )
 
 

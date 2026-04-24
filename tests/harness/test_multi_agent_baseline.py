@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 from openagent.harness import (
     DelegatedAgentInvocation,
     DirectViewInput,
@@ -8,6 +11,7 @@ from openagent.harness import (
     TaskRetentionPolicy,
     TaskRetentionRuntime,
 )
+from openagent.shared import ensure_subagent_workspace, write_subagent_ref
 from openagent.tools import ToolExecutionContext, create_builtin_toolset
 
 
@@ -20,6 +24,36 @@ def _build_runtime() -> tuple[LocalMultiAgentRuntime, InMemoryTaskManager]:
         notification_router=TaskNotificationRouter(),
     )
     return runtime, manager
+
+
+def _configure_workspace_runtime(
+    runtime: LocalMultiAgentRuntime,
+    tmp_path: Path,
+    *,
+    parent_workspace: Path | None = None,
+) -> None:
+    agent_root = tmp_path / "agent_default"
+
+    def _prepare(
+        agent_id: str,
+        parent_session_id: str | None,
+        metadata: dict[str, object] | None,
+    ) -> str:
+        workspace = ensure_subagent_workspace(
+            str(agent_root),
+            agent_id,
+            parent_workspace=str(parent_workspace) if parent_workspace is not None else None,
+        )
+        write_subagent_ref(
+            str(agent_root),
+            agent_id,
+            parent_session_id=parent_session_id,
+            workspace=workspace,
+            metadata=metadata,
+        )
+        return workspace
+
+    runtime.configure_workspace_runtime(_prepare, parent_agent_ref="agent_default")
 
 
 def test_synchronous_delegation_returns_structured_identity_and_result() -> None:
@@ -145,3 +179,30 @@ def test_agent_tool_maps_to_local_multi_agent_runtime() -> None:
     linkage = result.structured_content["agent_linkage"]
     assert linkage["mode"] == "synchronous"
     assert linkage["agent"]["parent_session_id"] == "sess_tool"
+
+
+def test_delegated_subagent_gets_independent_workspace_and_parent_ref(tmp_path: Path) -> None:
+    runtime, _ = _build_runtime()
+    parent_workspace = tmp_path / "parent-session-workspace"
+    parent_workspace.mkdir()
+    (parent_workspace / "seed.txt").write_text("seed\n", encoding="utf-8")
+    _configure_workspace_runtime(runtime, tmp_path, parent_workspace=parent_workspace)
+
+    result = runtime.delegate(
+        DelegatedAgentInvocation(
+            prompt="Write a helper",
+            parent_session_id="sess_parent",
+        )
+    )
+
+    workspace = Path(str(result["workspace"]))
+    child_ref = json.loads(
+        (tmp_path / "agent_default" / "subagents" / str(result["agent"]["agent_id"]) / "agent.json")
+        .read_text(encoding="utf-8")
+    )
+
+    assert workspace.is_dir()
+    assert workspace != parent_workspace
+    assert (workspace / "seed.txt").read_text(encoding="utf-8") == "seed\n"
+    assert child_ref["parent_session_id"] == "sess_parent"
+    assert child_ref["metadata"]["parent_agent_ref"] == "agent_default"

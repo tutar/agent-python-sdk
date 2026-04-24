@@ -23,6 +23,7 @@ from openagent.tools import (
     ToolSource,
     WebFetchTool,
     WebSearchTool,
+    WriteTool,
     create_builtin_commands,
     create_builtin_toolset,
 )
@@ -231,6 +232,53 @@ def test_bash_tool_reports_non_zero_exit(tmp_path: Path) -> None:
         assert str(exc) == "nope"
     else:
         raise AssertionError("Expected RuntimeError for non-zero bash command")
+
+
+def test_builtin_tools_prefer_execution_context_workdir(tmp_path: Path) -> None:
+    fallback_root = tmp_path / "fallback"
+    fallback_root.mkdir()
+    workspace = tmp_path / "session-workspace"
+    workspace.mkdir()
+    tool = WriteTool(str(fallback_root))
+
+    result = tool.call(
+        {"path": "notes.txt", "content": "hello\n"},
+        ToolExecutionContext(session_id="sess_workspace", working_directory=str(workspace)),
+    )
+
+    assert result.success is True
+    assert (workspace / "notes.txt").read_text(encoding="utf-8") == "hello\n"
+    assert not (fallback_root / "notes.txt").exists()
+
+
+def test_bash_tool_allows_workspace_local_commands_without_approval(tmp_path: Path) -> None:
+    tool = BashTool(str(tmp_path))
+    decision = tool.check_permissions(
+        {"command": "mkdir -p logs && touch logs/output.txt"},
+        ToolExecutionContext(session_id="sess_ok", working_directory=str(tmp_path)),
+    )
+
+    assert decision == PermissionDecision.ALLOW.value
+
+
+def test_bash_tool_requires_approval_for_workspace_escape(tmp_path: Path) -> None:
+    tool = BashTool(str(tmp_path))
+    decision = tool.check_permissions(
+        {"command": "cat ../secret.txt"},
+        ToolExecutionContext(session_id="sess_escape", working_directory=str(tmp_path)),
+    )
+
+    assert decision == PermissionDecision.ASK.value
+
+
+def test_bash_tool_denies_modifying_workspace_root_itself(tmp_path: Path) -> None:
+    tool = BashTool(str(tmp_path))
+    decision = tool.check_permissions(
+        {"command": "rm -rf $PWD"},
+        ToolExecutionContext(session_id="sess_deny", working_directory=str(tmp_path)),
+    )
+
+    assert decision == PermissionDecision.DENY.value
 
 
 def test_ask_user_question_tool_raises_requires_action() -> None:

@@ -15,7 +15,12 @@ from openagent.harness.runtime.core.agent_runtime import SimpleHarness
 from openagent.harness.runtime.io import ModelProviderAdapter
 from openagent.object_model import JsonObject
 from openagent.observability import AgentObservability
-from openagent.shared import normalize_workspace_root
+from openagent.shared import (
+    normalize_openagent_root,
+    normalize_workspace_root,
+    resolve_agent_root,
+    resolve_path_env,
+)
 from openagent.tools import ToolDefinition
 
 from .adapter import WeComChannelAdapter
@@ -32,8 +37,10 @@ class WeComAppConfig:
     secret: str
     ws_url: str = "wss://openws.work.weixin.qq.com"
     ping_interval_seconds: float = 30.0
-    session_root: str = str(Path(".openagent") / "wecom" / "sessions")
-    binding_root: str = str(Path(".openagent") / "wecom" / "sessions" / "bindings")
+    openagent_root: str = str(Path(".openagent"))
+    agent_root: str = str(Path(".openagent") / "agent_default")
+    session_root: str = str(Path(".openagent") / "agent_default" / "sessions")
+    binding_root: str = str(Path(".openagent") / "agent_default" / "bindings")
     allowed_users: tuple[str, ...] = ()
     workspace_root: str = field(default_factory=os.getcwd)
 
@@ -45,18 +52,23 @@ class WeComAppConfig:
             raise RuntimeError("OPENAGENT_WECOM_BOT_ID is required")
         if not secret:
             raise RuntimeError("OPENAGENT_WECOM_SECRET is required")
-        session_root = os.getenv(
+        openagent_root = normalize_openagent_root(os.getenv("OPENAGENT_ROOT"))
+        role_id = os.getenv("OPENAGENT_ROLE_ID")
+        agent_root = resolve_agent_root(openagent_root, role_id)
+        session_root = resolve_path_env(
             "OPENAGENT_SESSION_ROOT",
-            str(Path(".openagent") / "wecom" / "sessions"),
-        )
-        binding_root = os.getenv(
+            str(Path(agent_root) / "sessions"),
+        ) or str(Path(agent_root) / "sessions")
+        binding_root = resolve_path_env(
             "OPENAGENT_BINDING_ROOT",
-            str(Path(session_root) / "bindings"),
-        )
+            str(Path(agent_root) / "bindings"),
+        ) or str(Path(agent_root) / "bindings")
         ping_interval = float(os.getenv("OPENAGENT_WECOM_PING_INTERVAL_SECONDS", "30"))
         return cls(
             bot_id=bot_id,
             secret=secret,
+            openagent_root=openagent_root,
+            agent_root=agent_root,
             ws_url=os.getenv("OPENAGENT_WECOM_WS_URL", "wss://openws.work.weixin.qq.com"),
             ping_interval_seconds=ping_interval,
             session_root=session_root,

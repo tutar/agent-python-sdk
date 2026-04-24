@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -140,8 +141,12 @@ class ReadTool(_BuiltinTool):
         del arguments
         return True
 
-    def call(self, arguments: dict[str, object]) -> ToolResult:
-        path = _resolve_path(self.root, str(arguments["path"]))
+    def call(
+        self,
+        arguments: dict[str, object],
+        context: ToolExecutionContext | None = None,
+    ) -> ToolResult:
+        path = _resolve_path(_effective_root(self.root, context), str(arguments["path"]))
         content = path.read_text(encoding="utf-8")
         return ToolResult(
             tool_name=self.name,
@@ -177,8 +182,12 @@ class WriteTool(_BuiltinTool):
         )
         self.root = root
 
-    def call(self, arguments: dict[str, object]) -> ToolResult:
-        path = _resolve_path(self.root, str(arguments["path"]))
+    def call(
+        self,
+        arguments: dict[str, object],
+        context: ToolExecutionContext | None = None,
+    ) -> ToolResult:
+        path = _resolve_path(_effective_root(self.root, context), str(arguments["path"]))
         path.parent.mkdir(parents=True, exist_ok=True)
         content = str(arguments.get("content", ""))
         path.write_text(content, encoding="utf-8")
@@ -217,8 +226,12 @@ class EditTool(_BuiltinTool):
         )
         self.root = root
 
-    def call(self, arguments: dict[str, object]) -> ToolResult:
-        path = _resolve_path(self.root, str(arguments["path"]))
+    def call(
+        self,
+        arguments: dict[str, object],
+        context: ToolExecutionContext | None = None,
+    ) -> ToolResult:
+        path = _resolve_path(_effective_root(self.root, context), str(arguments["path"]))
         old = str(arguments.get("old", ""))
         new = str(arguments.get("new", ""))
         content = path.read_text(encoding="utf-8")
@@ -261,9 +274,13 @@ class GlobTool(_BuiltinTool):
         del arguments
         return True
 
-    def call(self, arguments: dict[str, object]) -> ToolResult:
+    def call(
+        self,
+        arguments: dict[str, object],
+        context: ToolExecutionContext | None = None,
+    ) -> ToolResult:
         pattern = str(arguments["pattern"])
-        root = Path(self.root)
+        root = Path(_effective_root(self.root, context))
         matches = sorted(
             str(path.relative_to(root))
             for path in root.rglob("*")
@@ -305,10 +322,15 @@ class GrepTool(_BuiltinTool):
         del arguments
         return True
 
-    def call(self, arguments: dict[str, object]) -> ToolResult:
+    def call(
+        self,
+        arguments: dict[str, object],
+        context: ToolExecutionContext | None = None,
+    ) -> ToolResult:
         needle = str(arguments["pattern"])
         results: list[str] = []
-        for path in Path(self.root).rglob("*"):
+        root = Path(_effective_root(self.root, context))
+        for path in root.rglob("*"):
             if not path.is_file():
                 continue
             try:
@@ -317,7 +339,7 @@ class GrepTool(_BuiltinTool):
                 continue
             for line_number, line in enumerate(content.splitlines(), start=1):
                 if needle in line:
-                    results.append(f"{path.relative_to(self.root)}:{line_number}:{line}")
+                    results.append(f"{path.relative_to(root)}:{line_number}:{line}")
         return ToolResult(
             tool_name=self.name,
             success=True,
@@ -352,14 +374,20 @@ class BashTool(_BuiltinTool):
         arguments: dict[str, object],
         tool_use_context: ToolExecutionContext | None = None,
     ) -> str:
-        del arguments, tool_use_context
-        return PermissionDecision.ASK.value
+        command = str(arguments.get("command", ""))
+        root = _effective_root(self.root, tool_use_context)
+        return _bash_permission_decision(command, root)
 
-    def call(self, arguments: dict[str, object]) -> ToolResult:
+    def call(
+        self,
+        arguments: dict[str, object],
+        context: ToolExecutionContext | None = None,
+    ) -> ToolResult:
         command = str(arguments["command"])
+        root = _effective_root(self.root, context)
         completed = subprocess.run(
             command,
-            cwd=self.root,
+            cwd=root,
             shell=True,
             capture_output=True,
             text=True,
@@ -680,9 +708,77 @@ def create_builtin_commands() -> list[Command]:
     ]
 
 
+def _effective_root(root: str, context: ToolExecutionContext | None) -> str:
+    if (
+        context is not None
+        and isinstance(context.working_directory, str)
+        and context.working_directory
+    ):
+        return str(Path(context.working_directory).resolve())
+    return str(Path(root).resolve())
+
+
 def _resolve_path(root: str, raw_path: str) -> Path:
-    path = (Path(root) / raw_path).resolve()
+    root_path = Path(root).resolve()
+    path = (root_path / raw_path).resolve()
+    try:
+        path.relative_to(root_path)
+    except ValueError as exc:
+        raise PermissionError("path escapes current workspace") from exc
     return path
+
+
+def _bash_permission_decision(command: str, workspace_root: str) -> str:
+    workspace = Path(workspace_root).resolve()
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return PermissionDecision.ASK.value
+    if not tokens:
+        return PermissionDecision.ALLOW.value
+    destructive = tokens[0] in {"rm", "rmdir", "mv", "chmod", "chown"}
+    for token in tokens[1:]:
+        if not token or token.startswith("-"):
+            continue
+        normalized = _expand_workspace_token(token, workspace)
+        if normalized is None:
+            continue
+        resolved = _command_target_path(workspace, normalized)
+        if resolved is None:
+            return PermissionDecision.ASK.value
+        if resolved == workspace and destructive:
+            return PermissionDecision.DENY.value
+        try:
+            resolved.relative_to(workspace)
+        except ValueError:
+            return PermissionDecision.ASK.value
+    return PermissionDecision.ALLOW.value
+
+
+def _expand_workspace_token(token: str, workspace: Path) -> str | None:
+    stripped = token.strip()
+    if stripped in {"|", "||", "&&", ";", ">", ">>", "<"}:
+        return None
+    return (
+        stripped.replace("${PWD}", str(workspace))
+        .replace("$PWD", str(workspace))
+        .replace("~", str(Path.home()), 1)
+    )
+
+
+def _command_target_path(workspace: Path, token: str) -> Path | None:
+    candidate = token.strip()
+    if not candidate:
+        return None
+    if candidate in {".", "./"}:
+        return workspace
+    if candidate.startswith("/"):
+        return Path(candidate).resolve()
+    if candidate.startswith("..") or candidate.startswith("./"):
+        return (workspace / candidate).resolve()
+    if "/" in candidate:
+        return (workspace / candidate).resolve()
+    return (workspace / candidate).resolve()
 
 
 def _default_web_fetch_backend() -> WebFetchBackend:

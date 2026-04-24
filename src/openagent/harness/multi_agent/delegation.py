@@ -39,8 +39,10 @@ class LocalDelegationRuntime:
         metadata: JsonObject = {
             "delegated_agent_id": identity.agent_id,
             "delegated_agent_type": identity.agent_type,
+            "parent_agent_ref": identity.parent_agent_ref,
             "parent_session_id": identity.parent_session_id,
             "invoking_request_id": identity.invoking_request_id,
+            "workspace": identity.workspace,
         }
         handle = self.orchestrator.start_background_task(
             description,
@@ -55,6 +57,7 @@ class LocalDelegationRuntime:
             "task_id": handle.task_id,
             "agent": identity.to_dict(),
             "status": handle.status,
+            "workspace": identity.workspace,
         }
 
     def delegate_synchronous(
@@ -67,6 +70,7 @@ class LocalDelegationRuntime:
             "agent": identity.to_dict(),
             "summary": f"Delegated worker accepted task: {invocation.prompt}",
             "output_ref": f"memory://delegates/{identity.agent_id}/result",
+            "workspace": identity.workspace,
         }
 
 
