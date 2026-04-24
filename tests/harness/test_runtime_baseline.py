@@ -453,6 +453,100 @@ def test_tool_permission_denied_raises_failed_terminal_state(tmp_path) -> None:
     assert terminal.reason == "tool_permission_denied"
 
 
+def test_iteration_limit_exceeded_reports_search_loop_summary(tmp_path) -> None:
+    search_tool = FakeTool(name="WebSearch")
+    session_store = InMemorySessionStore()
+    tools = StaticToolRegistry([search_tool])
+    executor = SimpleToolExecutor(tools)
+    model = ScriptedModel(
+        responses=[
+            ModelTurnResponse(
+                tool_calls=[ToolCall(tool_name="WebSearch", arguments={"query": f"news {index}"})]
+            )
+            for index in range(3)
+        ]
+    )
+    harness = SimpleHarness(
+        model=model,
+        sessions=session_store,
+        tools=tools,
+        executor=executor,
+        max_iterations=3,
+        session_root_dir=str(tmp_path / "sessions"),
+    )
+
+    events, terminal = harness.run_turn("search loop", "sess_iteration_search")
+
+    assert terminal.status is TerminalStatus.FAILED
+    assert terminal.reason == "iteration_limit_exceeded"
+    assert terminal.summary == (
+        "Iteration limit exceeded after 3 iterations of repeated search or fetch calls "
+        "without a final answer."
+    )
+    assert events[-1].payload["summary"] == terminal.summary
+
+
+def test_iteration_limit_exceeded_reports_file_ops_loop_summary(tmp_path) -> None:
+    read_tool = FakeTool(name="Read")
+    session_store = InMemorySessionStore()
+    tools = StaticToolRegistry([read_tool])
+    executor = SimpleToolExecutor(tools)
+    model = ScriptedModel(
+        responses=[
+            ModelTurnResponse(
+                tool_calls=[ToolCall(tool_name="Read", arguments={"path": f"file-{index}.txt"})]
+            )
+            for index in range(2)
+        ]
+    )
+    harness = SimpleHarness(
+        model=model,
+        sessions=session_store,
+        tools=tools,
+        executor=executor,
+        max_iterations=2,
+        session_root_dir=str(tmp_path / "sessions"),
+    )
+
+    _, terminal = harness.run_turn("file loop", "sess_iteration_file")
+
+    assert terminal.reason == "iteration_limit_exceeded"
+    assert terminal.summary == (
+        "Iteration limit exceeded after 2 iterations of repeated file operations "
+        "without a final answer."
+    )
+
+
+def test_iteration_limit_exceeded_reports_generic_tool_chain_summary(tmp_path) -> None:
+    alpha_tool = FakeTool(name="alpha")
+    beta_tool = FakeTool(name="beta")
+    session_store = InMemorySessionStore()
+    tools = StaticToolRegistry([alpha_tool, beta_tool])
+    executor = SimpleToolExecutor(tools)
+    model = ScriptedModel(
+        responses=[
+            ModelTurnResponse(tool_calls=[ToolCall(tool_name="alpha", arguments={})]),
+            ModelTurnResponse(tool_calls=[ToolCall(tool_name="beta", arguments={})]),
+        ]
+    )
+    harness = SimpleHarness(
+        model=model,
+        sessions=session_store,
+        tools=tools,
+        executor=executor,
+        max_iterations=2,
+        session_root_dir=str(tmp_path / "sessions"),
+    )
+
+    _, terminal = harness.run_turn("mixed loop", "sess_iteration_generic")
+
+    assert terminal.reason == "iteration_limit_exceeded"
+    assert terminal.summary == (
+        "Iteration limit exceeded after 2 iterations because the model kept calling "
+        "tools and never produced a final response."
+    )
+
+
 def test_route_tool_call_requires_session_backed_workspace() -> None:
     echo = FakeTool(name="echo")
     registry = StaticToolRegistry([echo])

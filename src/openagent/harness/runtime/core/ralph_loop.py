@@ -14,7 +14,13 @@ from openagent.harness.runtime.core.terminal import (
     TimedOutTurn,
     TurnControl,
 )
-from openagent.object_model import RuntimeEvent, RuntimeEventType, TerminalState, TerminalStatus
+from openagent.object_model import (
+    JsonValue,
+    RuntimeEvent,
+    RuntimeEventType,
+    TerminalState,
+    TerminalStatus,
+)
 from openagent.observability import ProgressUpdate, RuntimeMetric
 from openagent.session import SessionRecord, SessionStatus
 from openagent.tools import (
@@ -35,6 +41,8 @@ class RalphLoop:
 
     harness: SimpleHarness
     state: TurnState = field(default_factory=TurnState)
+    _SEARCH_TOOL_NAMES = frozenset({"WebSearch", "WebFetch"})
+    _FILE_TOOL_NAMES = frozenset({"Read", "Write", "Edit", "Glob", "Grep", "Bash"})
 
     def _new_turn_task_id(self, session_handle: str) -> str:
         session = self.harness.sessions.load_session(session_handle)
@@ -740,6 +748,12 @@ class RalphLoop:
             self.harness._persist_session(session_handle, session)
 
         self.state.transition = "failed"
+        failure_summary = self._iteration_limit_summary(session)
+        failure_attributes: dict[str, JsonValue] = {
+            "reason": "iteration_limit_exceeded",
+            "summary": failure_summary,
+            "failure_category": self._iteration_limit_category(session),
+        }
         duration_ms = (perf_counter() - interaction_started_at) * 1000
         self.harness._emit_metric(
             RuntimeMetric(
@@ -748,7 +762,7 @@ class RalphLoop:
                 unit="ms",
                 session_id=session_handle,
                 task_id=turn_task_id,
-                attributes={"reason": "iteration_limit_exceeded"},
+                attributes=failure_attributes,
             )
         )
         self.harness._emit_session_state(
@@ -758,7 +772,7 @@ class RalphLoop:
         )
         observability.end_span(
             interaction_span,
-            {"reason": "iteration_limit_exceeded"},
+            failure_attributes,
             status="error",
             duration_ms=duration_ms,
         )
@@ -766,5 +780,55 @@ class RalphLoop:
             session,
             session_handle,
             RuntimeEventType.TURN_FAILED,
-            TerminalState(status=TerminalStatus.FAILED, reason="iteration_limit_exceeded"),
+            TerminalState(
+                status=TerminalStatus.FAILED,
+                reason="iteration_limit_exceeded",
+                summary=failure_summary,
+            ),
         )
+
+    def _iteration_limit_summary(self, session: SessionRecord) -> str:
+        category = self._iteration_limit_category(session)
+        prefix = f"Iteration limit exceeded after {self.harness.max_iterations} iterations"
+        if category == "repeated_search_loop":
+            return f"{prefix} of repeated search or fetch calls without a final answer."
+        if category == "repeated_file_ops_loop":
+            return f"{prefix} of repeated file operations without a final answer."
+        if category == "repeated_tool_loop":
+            tool_name = self._last_started_tool_name(session) or "tool"
+            return f"{prefix} of repeated {tool_name} calls without a final answer."
+        return (
+            f"{prefix} because the model kept calling tools and never produced a final response."
+        )
+
+    def _iteration_limit_category(self, session: SessionRecord) -> str:
+        tool_names = self._tool_started_names(session)
+        if not tool_names:
+            return "generic_iteration_limit"
+        unique_names = set(tool_names)
+        if unique_names.issubset(self._SEARCH_TOOL_NAMES):
+            return "repeated_search_loop"
+        if unique_names.issubset(self._FILE_TOOL_NAMES):
+            return "repeated_file_ops_loop"
+        if len(unique_names) == 1:
+            return "repeated_tool_loop"
+        return "tool_chain_no_final_answer"
+
+    def _tool_started_names(self, session: SessionRecord) -> list[str]:
+        names: list[str] = []
+        for event in session.events:
+            if event.event_type is not RuntimeEventType.TOOL_STARTED:
+                continue
+            tool_name = event.payload.get("tool_name")
+            if isinstance(tool_name, str) and tool_name:
+                names.append(tool_name)
+        return names
+
+    def _last_started_tool_name(self, session: SessionRecord) -> str | None:
+        for event in reversed(session.events):
+            if event.event_type is not RuntimeEventType.TOOL_STARTED:
+                continue
+            tool_name = event.payload.get("tool_name")
+            if isinstance(tool_name, str) and tool_name:
+                return tool_name
+        return None
