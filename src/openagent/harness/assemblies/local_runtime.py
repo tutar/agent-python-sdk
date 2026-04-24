@@ -12,23 +12,21 @@ from openagent.gateway.interfaces import ChannelAdapter
 from openagent.gateway.session_adapter import InProcessSessionAdapter
 from openagent.harness.context_engineering import ContextGovernance
 from openagent.harness.multi_agent import LocalMultiAgentRuntime, TaskNotificationRouter
-from openagent.harness.runtime import FileModelIoCapture, NoOpModelIoCapture
+from openagent.harness.runtime import FileModelIoCapture
 from openagent.harness.runtime.core.agent_runtime import SimpleHarness
 from openagent.harness.runtime.io import ModelProviderAdapter
 from openagent.harness.task import (
     FileTaskManager,
-    InMemoryTaskManager,
     LocalBackgroundAgentOrchestrator,
     TaskRetentionPolicy,
     TaskRetentionRuntime,
 )
 from openagent.object_model import JsonObject
 from openagent.observability import AgentObservability
-from openagent.session import FileSessionStore, InMemorySessionStore
+from openagent.session import FileSessionStore
 from openagent.shared import (
     normalize_openagent_root,
     normalize_workspace_root,
-    resolve_agent_root,
     resolve_agent_root_from_session_root,
     resolve_path_env,
 )
@@ -39,47 +37,6 @@ from openagent.tools import (
     ToolExecutionContext,
     create_builtin_toolset,
 )
-
-
-def create_in_memory_runtime_assembly(
-    model: ModelProviderAdapter,
-    tools: list[ToolDefinition] | None = None,
-    observability: AgentObservability | None = None,
-    workspace_root: str | None = None,
-    openagent_root: str | None = None,
-    role_id: str | None = None,
-) -> SimpleHarness:
-    task_manager = InMemoryTaskManager(retention_policy=TaskRetentionPolicy())
-    multi_agent = LocalMultiAgentRuntime(
-        task_manager=task_manager,
-        background_orchestrator=LocalBackgroundAgentOrchestrator(task_manager),
-        retention=TaskRetentionRuntime(task_manager, TaskRetentionPolicy()),
-        notification_router=TaskNotificationRouter(),
-    )
-    registry = StaticToolRegistry(
-        _resolve_runtime_tools(
-            root=_default_workspace_root(workspace_root),
-            tools=tools,
-            agent_handler=multi_agent.as_agent_handler(),
-        )
-    )
-    harness = SimpleHarness(
-        model=model,
-        sessions=InMemorySessionStore(),
-        tools=registry,
-        executor=SimpleToolExecutor(registry),
-        context_governance=ContextGovernance(),
-        observability=observability,
-        model_io_capture=NoOpModelIoCapture(),
-        workspace_root=_default_workspace_root(workspace_root),
-        openagent_root=_default_openagent_root(openagent_root),
-        agent_root_dir=_default_agent_root(openagent_root, role_id),
-    )
-    multi_agent.configure_workspace_runtime(
-        harness.prepare_delegated_agent_workspace,
-        parent_agent_ref=harness.parent_agent_ref,
-    )
-    return harness
 
 
 def create_file_runtime_assembly(
@@ -187,13 +144,6 @@ def _default_openagent_root(openagent_root: str | None) -> str:
     return normalize_openagent_root(
         openagent_root,
         default=os.getenv("OPENAGENT_ROOT", ".openagent"),
-    )
-
-
-def _default_agent_root(openagent_root: str | None, role_id: str | None) -> str:
-    return resolve_agent_root(
-        _default_openagent_root(openagent_root),
-        role_id or os.getenv("OPENAGENT_ROLE_ID"),
     )
 
 

@@ -39,7 +39,6 @@ from openagent.harness.runtime import (
     RalphLoop,
 )
 from openagent.harness.task import TaskManager
-from openagent.local import create_in_memory_runtime
 from openagent.sandbox import Sandbox
 from openagent.session import SessionStore
 from openagent.tools import ToolDefinition, ToolExecutor, ToolRegistry
@@ -72,7 +71,6 @@ def test_public_exports_are_importable() -> None:
     assert Sandbox is not None
     assert TaskManager is not None
     assert ViewedTranscript is not None
-    assert create_in_memory_runtime is not None
     openagent_module = importlib.import_module("openagent")
     assert not hasattr(openagent_module, "FileMemoryStore")
 

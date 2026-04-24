@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import openagent
-from openagent.local import create_file_runtime, create_in_memory_runtime
+from openagent.local import create_file_runtime
 from openagent.object_model import RuntimeEventType
 from openagent.tools import (
     AskUserQuestionTool,
@@ -313,10 +313,8 @@ def test_review_command_and_builtin_review_surface() -> None:
 
 
 def test_local_runtime_defaults_to_builtin_tool_baseline(tmp_path: Path) -> None:
-    in_memory = create_in_memory_runtime(model=object())
     file_backed = create_file_runtime(model=object(), session_root=str(tmp_path / "sessions"))
 
-    in_memory_names = {record.tool_name for record in in_memory.tools.list_tool_records()}
     file_names = {record.tool_name for record in file_backed.tools.list_tool_records()}
 
     expected = {
@@ -331,7 +329,6 @@ def test_local_runtime_defaults_to_builtin_tool_baseline(tmp_path: Path) -> None
         "WebSearch",
         "AskUserQuestion",
     }
-    assert expected.issubset(in_memory_names)
     assert expected.issubset(file_names)
 
 

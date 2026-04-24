@@ -1,6 +1,7 @@
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
+from tempfile import mkdtemp
 
 from openagent.gateway import (
     ChannelAdapter,
@@ -12,10 +13,7 @@ from openagent.gateway import (
     TerminalChannelAdapter,
 )
 from openagent.harness.runtime import ModelTurnRequest, ModelTurnResponse
-from openagent.local import (
-    create_gateway_for_runtime,
-    create_in_memory_runtime,
-)
+from openagent.local import create_file_runtime, create_gateway_for_runtime
 from openagent.object_model import RuntimeEventType, ToolResult
 from openagent.tools import (
     PermissionDecision,
@@ -125,7 +123,8 @@ def build_terminal_gateway(
     tools: list[object] | None = None,
     binding_root: str | None = None,
 ) -> Gateway:
-    runtime = create_in_memory_runtime(model=model, tools=tools)
+    session_root = Path(mkdtemp(prefix="openagent-gateway-runtime-")) / "agent_default" / "sessions"
+    runtime = create_file_runtime(model=model, tools=tools, session_root=str(session_root))
     return create_gateway_for_runtime(
         runtime,
         [TerminalChannelAdapter()],
@@ -308,7 +307,13 @@ def test_gateway_filters_and_replays_projected_events() -> None:
 
 
 def test_gateway_registers_channel_defaults_for_bindings() -> None:
-    runtime = create_in_memory_runtime(model=StaticModel(message="hello"))
+    session_root = (
+        Path(mkdtemp(prefix="openagent-gateway-defaults-")) / "agent_default" / "sessions"
+    )
+    runtime = create_file_runtime(
+        model=StaticModel(message="hello"),
+        session_root=str(session_root),
+    )
     gateway = Gateway(InProcessSessionAdapter(runtime))
     channel_adapter: ChannelAdapter = FilteringTerminalChannelAdapter()
     channel = ChannelIdentity(
@@ -436,7 +441,11 @@ def test_gateway_get_binding_restores_persisted_binding(tmp_path: Path) -> None:
 
 
 def test_gateway_enforces_one_chat_one_session() -> None:
-    runtime = create_in_memory_runtime(model=StaticModel(message="x"))
+    session_root = Path(mkdtemp(prefix="openagent-gateway-unique-")) / "agent_default" / "sessions"
+    runtime = create_file_runtime(
+        model=StaticModel(message="x"),
+        session_root=str(session_root),
+    )
     gateway = Gateway(InProcessSessionAdapter(runtime))
     channel = ChannelIdentity(
         channel_type="terminal",

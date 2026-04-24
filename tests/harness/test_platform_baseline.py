@@ -21,7 +21,7 @@ from openagent.harness.task import (
     VerificationRequest,
     VerificationVerdict,
 )
-from openagent.local import create_file_runtime, create_in_memory_runtime
+from openagent.local import create_file_runtime
 from openagent.object_model import JsonObject, TerminalStatus, ToolResult
 from openagent.sandbox import LocalSandbox, SandboxExecutionRequest
 from openagent.session import SessionMessage
@@ -152,8 +152,11 @@ def test_local_sandbox_negotiates_capabilities_and_denies_missing_access() -> No
     assert "Missing sandbox credentials: cloud-token" in negotiation.reasons
 
 
-def test_in_memory_runtime_creates_working_runtime() -> None:
-    runtime = create_in_memory_runtime(model=StaticModel(message="profile-ready"))
+def test_file_runtime_creates_working_runtime(tmp_path: Path) -> None:
+    runtime = create_file_runtime(
+        model=StaticModel(message="profile-ready"),
+        session_root=str(tmp_path / "agent_default" / "sessions"),
+    )
 
     events, terminal = runtime.run_turn("hello", "sess_profile")
 
@@ -162,7 +165,10 @@ def test_in_memory_runtime_creates_working_runtime() -> None:
 
 
 def test_local_runtimes_use_in_process_binding(tmp_path: Path) -> None:
-    tui_runtime = create_in_memory_runtime(StaticModel(message="tui"))
+    tui_runtime = create_file_runtime(
+        StaticModel(message="tui"),
+        str(tmp_path / "tui" / "agent_default" / "sessions"),
+    )
     file_runtime = create_file_runtime(StaticModel(message="file"), str(tmp_path / "file"))
 
     tui_events, tui_terminal = tui_runtime.run_turn("hello", "sess_tui")
@@ -185,8 +191,11 @@ def test_file_runtime_defaults_model_io_root_under_agent_root(tmp_path: Path) ->
     ).resolve()
 
 
-def test_runtime_events_include_turn_task_id() -> None:
-    runtime = create_in_memory_runtime(model=StaticModel(message="tasked"))
+def test_runtime_events_include_turn_task_id(tmp_path: Path) -> None:
+    runtime = create_file_runtime(
+        model=StaticModel(message="tasked"),
+        session_root=str(tmp_path / "agent_default" / "sessions"),
+    )
 
     events, terminal = runtime.run_turn("hello", "sess_tasked")
 
@@ -339,7 +348,10 @@ def test_context_governance_compacts_and_externalizes(tmp_path: Path) -> None:
         overflow_compact_to_messages=1,
         storage_dir=str(tmp_path),
     )
-    runtime = create_in_memory_runtime(model=StaticModel(message="governed"))
+    runtime = create_file_runtime(
+        model=StaticModel(message="governed"),
+        session_root=str(tmp_path / "agent_default" / "sessions"),
+    )
     runtime.context_governance = governance
 
     runtime.run_turn("a" * 120, "sess_compact")

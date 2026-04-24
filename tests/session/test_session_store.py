@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from openagent.harness.runtime import ModelTurnRequest, ModelTurnResponse
-from openagent.local import create_file_runtime, create_in_memory_runtime
+from openagent.local import create_file_runtime
 from openagent.object_model import RuntimeEventType
 from openagent.session import (
     FileSessionStore,
@@ -71,9 +71,10 @@ def test_resume_snapshot_includes_short_term_memory() -> None:
     assert snapshot.short_term_memory["summary"] == "Continue the migration plan."
 
 
-def test_in_memory_session_store_checkpoint_and_readback() -> None:
-    runtime = create_in_memory_runtime(
-        model=ScriptedModel([ModelTurnResponse(assistant_message="ok")])
+def test_file_runtime_checkpoint_and_readback(tmp_path: Path) -> None:
+    runtime = create_file_runtime(
+        model=ScriptedModel([ModelTurnResponse(assistant_message="ok")]),
+        session_root=str(tmp_path / "agent_default" / "sessions"),
     )
     events, _ = runtime.run_turn("hello", "sess_mem")
 
@@ -82,23 +83,23 @@ def test_in_memory_session_store_checkpoint_and_readback() -> None:
     replayed = store.read_events("sess_mem")
     replayed_from_cursor = store.read_events("sess_mem", cursor=checkpoint.cursor)
 
-    assert isinstance(store, InMemorySessionStore)
+    assert isinstance(store, FileSessionStore)
     assert checkpoint.event_offset == len(events)
     assert [event.event_type for event in replayed] == [event.event_type for event in events]
     assert replayed_from_cursor == []
 
 
 def test_file_session_store_appends_event_log(tmp_path: Path) -> None:
-    store = FileSessionStore(tmp_path / "sessions")
-    runtime = create_in_memory_runtime(
+    runtime = create_file_runtime(
         model=ScriptedModel(
             [
                 ModelTurnResponse(assistant_message="saved"),
                 ModelTurnResponse(assistant_message="saved-again"),
             ]
-        )
+        ),
+        session_root=str(tmp_path / "sessions"),
     )
-    runtime.sessions = store
+    store = runtime.sessions
 
     first_events, _ = runtime.run_turn("first", "sess_file")
     first_checkpoint = store.get_checkpoint("sess_file")

@@ -91,7 +91,6 @@ from openagent.harness.task import (
 from openagent.local import (
     create_file_runtime,
     create_gateway_for_runtime,
-    create_in_memory_runtime,
 )
 from openagent.object_model import (
     CapabilityView,
@@ -453,7 +452,6 @@ __all__ = [
     "create_feishu_runtime",
     "create_file_runtime",
     "create_gateway_for_runtime",
-    "create_in_memory_runtime",
     "create_wecom_gateway",
     "create_wecom_host",
     "create_wecom_host_from_env",

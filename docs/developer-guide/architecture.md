@@ -350,7 +350,6 @@ capability surface 当前统一投影三类能力：
 
 当前不再保留 `profile` 抽象。OpenAgent 直接暴露本地装配 helper：
 
-- `create_in_memory_runtime(...)`
 - `create_file_runtime(...)`
 - `create_gateway_for_runtime(...)`
 
