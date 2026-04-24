@@ -33,12 +33,14 @@ export OPENAGENT_MODEL=Qwen3.5-9B-Q4_K_M.gguf
 可选：
 
 ```bash
+export OPENAGENT_ROOT=.openagent
 export OPENAGENT_WECOM_WS_URL=wss://openws.work.weixin.qq.com
 export OPENAGENT_WECOM_ALLOWED_USERS=userid_1,userid_2
 export OPENAGENT_WECOM_PING_INTERVAL_SECONDS=30
-export OPENAGENT_SESSION_ROOT=.openagent/wecom/sessions
-export OPENAGENT_BINDING_ROOT=.openagent/wecom/sessions/bindings
 ```
+
+`openagent-host` 会从 `OPENAGENT_ROOT` 推导默认的 agent/session/binding/model-io 目录，不需要再单独配置
+`OPENAGENT_SESSION_ROOT` / `OPENAGENT_BINDING_ROOT` 这类细分 root。
 
 `OPENAGENT_WECOM_ALLOWED_USERS` 为空时允许所有私聊用户驱动当前 agent。真实使用时建议配置允许列表。
 

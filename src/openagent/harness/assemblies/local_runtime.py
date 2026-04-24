@@ -117,7 +117,9 @@ def create_file_runtime_assembly(
         executor=SimpleToolExecutor(registry),
         context_governance=ContextGovernance(storage_dir=session_root),
         observability=observability,
-        model_io_capture=FileModelIoCapture(_default_model_io_root(session_root, model_io_root)),
+        model_io_capture=FileModelIoCapture(
+            _default_model_io_root(session_root, model_io_root, agent_root=agent_root)
+        ),
         workspace_root=_default_workspace_root(workspace_root),
         session_root_dir=session_root,
         openagent_root=_default_openagent_root(openagent_root),
@@ -195,9 +197,16 @@ def _default_agent_root(openagent_root: str | None, role_id: str | None) -> str:
     )
 
 
-def _default_model_io_root(session_root: str, model_io_root: str | None) -> str:
+def _default_model_io_root(
+    session_root: str,
+    model_io_root: str | None,
+    *,
+    agent_root: str | None = None,
+) -> str:
     if model_io_root is not None:
         return model_io_root
+    if agent_root is not None:
+        return os.path.join(agent_root, "model-io")
     if resolved_model_io_root := resolve_path_env("OPENAGENT_MODEL_IO_ROOT"):
         return resolved_model_io_root
     if resolved_data_root := resolve_path_env("OPENAGENT_DATA_ROOT"):

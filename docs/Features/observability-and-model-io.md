@@ -35,7 +35,7 @@
 
 ### 当前支持
 
-- file-backed model dataset capture under `.openagent/data/model-io`
+- file-backed model dataset capture under `.openagent/agent_<role_id|default>/model-io`
 - append-only `index.jsonl`
 - per-call record files under `records/<session_id>/`
 - assembled `ModelTurnRequest` capture
@@ -45,7 +45,7 @@
 - provider-exposed reasoning / thinking block capture
 - non-streaming and streaming final result capture
 - error-path capture for provider failure / timeout / retry exhaustion
-- configurable roots via `OPENAGENT_DATA_ROOT` and `OPENAGENT_MODEL_IO_ROOT`
+- host defaults derived from `OPENAGENT_ROOT` and optional `OPENAGENT_ROLE_ID`
 - provider failures are also echoed to the local host console with session id, adapter, retry index,
   and the model-io capture root so local debugging does not depend on opening the card output first
 

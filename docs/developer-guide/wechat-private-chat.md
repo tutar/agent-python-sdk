@@ -21,12 +21,14 @@ uv sync --dev --extra wechat
 可选环境变量：
 
 ```bash
+export OPENAGENT_ROOT=.openagent
 export OPENAGENT_WECHAT_BASE_URL=https://ilinkai.weixin.qq.com
 export OPENAGENT_WECHAT_CRED_PATH=.openagent/wechat/credentials.json
 export OPENAGENT_WECHAT_ALLOWED_SENDERS=wx_user_1,wx_user_2
-export OPENAGENT_SESSION_ROOT=.openagent/wechat/sessions
-export OPENAGENT_BINDING_ROOT=.openagent/wechat/sessions/bindings
 ```
+
+`openagent-host` 会从 `OPENAGENT_ROOT` 推导默认的 agent/session/binding/model-io 目录，不需要再单独配置
+`OPENAGENT_SESSION_ROOT` / `OPENAGENT_BINDING_ROOT` 这类细分 root。
 
 `OPENAGENT_WECHAT_ALLOWED_SENDERS` 为空时允许所有私聊联系人驱动当前 agent，适合本地 demo；真实使用时建议配置允许列表。
 

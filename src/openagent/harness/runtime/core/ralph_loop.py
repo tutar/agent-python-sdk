@@ -36,6 +36,11 @@ class RalphLoop:
     harness: SimpleHarness
     state: TurnState = field(default_factory=TurnState)
 
+    def _new_turn_task_id(self, session_handle: str) -> str:
+        session = self.harness.sessions.load_session(session_handle)
+        event_index = len(session.events) + 1
+        return f"turn:{session_handle}:{event_index}"
+
     def run_turn_stream(
         self,
         input: str,
@@ -61,10 +66,13 @@ class RalphLoop:
         if session.status is not SessionStatus.REQUIRES_ACTION or not session.pending_tool_calls:
             raise ValueError("Session has no pending requires_action continuation")
         working_directory = self.harness.ensure_session_workspace(session_handle, session)
+        turn_task_id = self._new_turn_task_id(session_handle)
+        self.state.task_id = turn_task_id
         interaction_span = observability.start_span(
             "interaction",
             {"continuation": True, "approved": approved},
             session_id=session_handle,
+            task_id=turn_task_id,
         )
         interaction_started_at = perf_counter()
         self.harness._emit_session_state(session_handle, "running", reason="continuation_started")
@@ -90,6 +98,7 @@ class RalphLoop:
                     value=duration_ms,
                     unit="ms",
                     session_id=session_handle,
+                    task_id=turn_task_id,
                     attributes={"reason": "approval_rejected"},
                 )
             )
@@ -114,6 +123,7 @@ class RalphLoop:
                 approved_tool_names=[tool_call.tool_name for tool_call in pending_calls],
                 working_directory=working_directory,
                 agent_id=session.agent_id,
+                task_id=turn_task_id,
             ),
         )
         emitted_events.extend(tool_events)
@@ -209,6 +219,7 @@ class RalphLoop:
                 value=duration_ms,
                 unit="ms",
                 session_id=session_handle,
+                task_id=turn_task_id,
                 attributes={"reason": "approval_continuation"},
             )
         )
@@ -216,6 +227,7 @@ class RalphLoop:
             ProgressUpdate(
                 scope="turn",
                 session_id=session_handle,
+                task_id=turn_task_id,
                 summary="approval_continuation",
                 last_activity="turn_completed",
                 duration_ms=duration_ms,
@@ -243,10 +255,12 @@ class RalphLoop:
         if not isinstance(session, SessionRecord):
             raise TypeError("SimpleHarness requires SessionRecord-compatible session state")
         working_directory = self.harness.ensure_session_workspace(session_handle, session)
+        turn_task_id = self._new_turn_task_id(session_handle)
         interaction_span = observability.start_span(
             "interaction",
             {"input_preview": input[:80]},
             session_id=session_handle,
+            task_id=turn_task_id,
         )
         interaction_started_at = perf_counter()
         tool_use_count = 0
@@ -256,6 +270,7 @@ class RalphLoop:
             turn_count=0,
             transition="turn_started",
             requires_action=False,
+            task_id=turn_task_id,
         )
         session.status = SessionStatus.RUNNING
         self.harness._emit_session_state(session_handle, "running", reason="turn_started")
@@ -263,6 +278,7 @@ class RalphLoop:
             ProgressUpdate(
                 scope="turn",
                 session_id=session_handle,
+                task_id=turn_task_id,
                 summary="turn_started",
                 last_activity="turn_started",
             )
@@ -292,6 +308,7 @@ class RalphLoop:
                         value=duration_ms,
                         unit="ms",
                         session_id=session_handle,
+                        task_id=turn_task_id,
                         attributes={"reason": "cancelled"},
                     )
                 )
@@ -328,6 +345,7 @@ class RalphLoop:
                         value=duration_ms,
                         unit="ms",
                         session_id=session_handle,
+                        task_id=turn_task_id,
                         attributes={"reason": "cancelled"},
                     )
                 )
@@ -354,6 +372,7 @@ class RalphLoop:
                         value=duration_ms,
                         unit="ms",
                         session_id=session_handle,
+                        task_id=turn_task_id,
                         attributes={"reason": "timeout"},
                     )
                 )
@@ -384,6 +403,7 @@ class RalphLoop:
                         value=duration_ms,
                         unit="ms",
                         session_id=session_handle,
+                        task_id=turn_task_id,
                         attributes={"reason": "retry_exhausted"},
                     )
                 )
@@ -440,6 +460,7 @@ class RalphLoop:
                         value=duration_ms,
                         unit="ms",
                         session_id=session_handle,
+                        task_id=turn_task_id,
                         attributes={"reason": "assistant_message"},
                     )
                 )
@@ -447,6 +468,7 @@ class RalphLoop:
                     ProgressUpdate(
                         scope="turn",
                         session_id=session_handle,
+                        task_id=turn_task_id,
                         summary="assistant_message",
                         last_activity="turn_completed",
                         duration_ms=duration_ms,
@@ -485,6 +507,7 @@ class RalphLoop:
                         session_id=session_handle,
                         agent_id=session.agent_id,
                         working_directory=working_directory,
+                        task_id=turn_task_id,
                     ),
                 )
                 yield from tool_events
@@ -516,6 +539,7 @@ class RalphLoop:
                         value=duration_ms,
                         unit="ms",
                         session_id=session_handle,
+                        task_id=turn_task_id,
                         attributes={"reason": "requires_action"},
                     )
                 )
@@ -523,6 +547,7 @@ class RalphLoop:
                     ProgressUpdate(
                         scope="turn",
                         session_id=session_handle,
+                        task_id=turn_task_id,
                         summary="requires_action",
                         last_activity="requires_action",
                         duration_ms=duration_ms,
@@ -550,6 +575,7 @@ class RalphLoop:
                         value=duration_ms,
                         unit="ms",
                         session_id=session_handle,
+                        task_id=turn_task_id,
                         attributes={"reason": "tool_permission_denied"},
                     )
                 )
@@ -584,6 +610,7 @@ class RalphLoop:
                         value=duration_ms,
                         unit="ms",
                         session_id=session_handle,
+                        task_id=turn_task_id,
                         attributes={"reason": "tool_execution_failed"},
                     )
                 )
@@ -618,6 +645,7 @@ class RalphLoop:
                         value=duration_ms,
                         unit="ms",
                         session_id=session_handle,
+                        task_id=turn_task_id,
                         attributes={"reason": "tool_cancelled"},
                     )
                 )
@@ -649,6 +677,7 @@ class RalphLoop:
                         value=duration_ms,
                         unit="ms",
                         session_id=session_handle,
+                        task_id=turn_task_id,
                         attributes={"reason": "tool_execution_failed"},
                     )
                 )
@@ -683,6 +712,7 @@ class RalphLoop:
                         value=duration_ms,
                         unit="ms",
                         session_id=session_handle,
+                        task_id=turn_task_id,
                         attributes={"reason": "tool_cancelled"},
                     )
                 )
@@ -717,6 +747,7 @@ class RalphLoop:
                 value=duration_ms,
                 unit="ms",
                 session_id=session_handle,
+                task_id=turn_task_id,
                 attributes={"reason": "iteration_limit_exceeded"},
             )
         )

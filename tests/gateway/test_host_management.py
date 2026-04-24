@@ -33,7 +33,7 @@ def build_host(tmp_path: Path) -> OpenAgentHost:
             session_root=str(agent_root / "sessions"),
             binding_root=str(agent_root / "bindings"),
             data_root=str(agent_root / "data"),
-            model_io_root=str(agent_root / "data" / "model-io"),
+            model_io_root=str(agent_root / "model-io"),
             terminal_host="127.0.0.1",
             terminal_port=8765,
         ),
@@ -181,11 +181,6 @@ def test_host_config_from_env_expands_openagent_root_references(
     tmp_path: Path,
 ) -> None:
     monkeypatch.setenv("OPENAGENT_ROOT", str(tmp_path / ".openagent"))
-    monkeypatch.setenv("OPENAGENT_HOST_ROOT", "${OPENAGENT_ROOT}/agent_default")
-    monkeypatch.setenv("OPENAGENT_SESSION_ROOT", "${OPENAGENT_HOST_ROOT}/sessions")
-    monkeypatch.setenv("OPENAGENT_BINDING_ROOT", "${OPENAGENT_HOST_ROOT}/bindings")
-    monkeypatch.setenv("OPENAGENT_DATA_ROOT", "${OPENAGENT_HOST_ROOT}/data")
-    monkeypatch.setenv("OPENAGENT_MODEL_IO_ROOT", "${OPENAGENT_DATA_ROOT}/model-io")
     monkeypatch.setenv("OPENAGENT_WORKSPACE_ROOT", "$PWD")
 
     config = OpenAgentHostConfig.from_env()
@@ -197,7 +192,60 @@ def test_host_config_from_env_expands_openagent_root_references(
     assert Path(config.session_root) == (expected_host_root / "sessions").resolve()
     assert Path(config.binding_root) == (expected_host_root / "bindings").resolve()
     assert Path(config.data_root) == (expected_host_root / "data").resolve()
-    assert Path(config.model_io_root) == (expected_host_root / "data" / "model-io").resolve()
+    assert Path(config.model_io_root) == (expected_host_root / "model-io").resolve()
+
+
+def test_host_config_from_env_ignores_legacy_root_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("OPENAGENT_ROOT", str(tmp_path / ".openagent"))
+    monkeypatch.setenv("OPENAGENT_HOST_ROOT", "/tmp/legacy-host-root")
+    monkeypatch.setenv("OPENAGENT_SESSION_ROOT", "/tmp/legacy-sessions")
+    monkeypatch.setenv("OPENAGENT_BINDING_ROOT", "/tmp/legacy-bindings")
+    monkeypatch.setenv("OPENAGENT_DATA_ROOT", "/tmp/legacy-data")
+    monkeypatch.setenv("OPENAGENT_MODEL_IO_ROOT", "/tmp/legacy-model-io")
+
+    config = OpenAgentHostConfig.from_env()
+
+    expected_agent_root = (tmp_path / ".openagent" / "agent_default").resolve()
+    assert Path(config.agent_root) == expected_agent_root
+    assert Path(config.session_root) == expected_agent_root / "sessions"
+    assert Path(config.binding_root) == expected_agent_root / "bindings"
+    assert Path(config.data_root) == expected_agent_root / "data"
+    assert Path(config.model_io_root) == expected_agent_root / "model-io"
+
+
+def test_host_config_direct_init_derives_paths_from_openagent_root(tmp_path: Path) -> None:
+    config = OpenAgentHostConfig(openagent_root=str(tmp_path / ".state"))
+
+    expected_root = (tmp_path / ".state").resolve()
+    expected_agent_root = expected_root / "agent_default"
+
+    assert Path(config.openagent_root) == expected_root
+    assert Path(config.agent_root) == expected_agent_root
+    assert Path(config.session_root) == expected_agent_root / "sessions"
+    assert Path(config.binding_root) == expected_agent_root / "bindings"
+    assert Path(config.data_root) == expected_agent_root / "data"
+    assert Path(config.model_io_root) == expected_agent_root / "model-io"
+
+
+def test_host_config_direct_init_preserves_explicit_path_overrides(tmp_path: Path) -> None:
+    custom_agent_root = tmp_path / "custom-agent"
+    config = OpenAgentHostConfig(
+        openagent_root=str(tmp_path / ".state"),
+        agent_root=str(custom_agent_root),
+        session_root=str(custom_agent_root / "custom-sessions"),
+        binding_root=str(custom_agent_root / "custom-bindings"),
+        data_root=str(custom_agent_root / "custom-data"),
+        model_io_root=str(custom_agent_root / "custom-model-io"),
+    )
+
+    assert Path(config.agent_root) == custom_agent_root
+    assert Path(config.session_root) == custom_agent_root / "custom-sessions"
+    assert Path(config.binding_root) == custom_agent_root / "custom-bindings"
+    assert Path(config.data_root) == custom_agent_root / "custom-data"
+    assert Path(config.model_io_root) == custom_agent_root / "custom-model-io"
 
 
 def test_host_requires_model_configuration(

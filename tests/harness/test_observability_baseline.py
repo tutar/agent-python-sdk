@@ -189,6 +189,22 @@ def test_streaming_model_emits_llm_span_and_metric() -> None:
     assert any(event.payload["name"] == "llm_request.duration_ms" for event in metrics)
 
 
+def test_turn_progress_events_include_task_id() -> None:
+    sink = InMemoryObservabilitySink()
+    harness = build_harness(StaticModel(message="hello"), [], sink)
+
+    harness.run_turn("hi", "sess_task_progress")
+
+    turn_progress = [
+        event.payload
+        for event in sink.list_by_kind("progress")
+        if event.payload.get("scope") == "turn"
+    ]
+
+    assert turn_progress
+    assert all(progress.get("task_id") for progress in turn_progress)
+
+
 def test_tool_progress_and_tool_span_are_emitted() -> None:
     sink = InMemoryObservabilitySink()
     harness = build_harness(ToolThenReplyModel(), [StreamingTool()], sink)

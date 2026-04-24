@@ -174,6 +174,28 @@ def test_local_runtimes_use_in_process_binding(tmp_path: Path) -> None:
     assert file_events[1].payload["message"] == "file"
 
 
+def test_file_runtime_defaults_model_io_root_under_agent_root(tmp_path: Path) -> None:
+    session_root = tmp_path / "agent_default" / "sessions"
+    runtime = create_file_runtime(StaticModel(message="file"), str(session_root))
+
+    assert runtime.agent_root_dir == str((tmp_path / "agent_default").resolve())
+    assert runtime.model_io_capture is not None
+    assert Path(runtime.model_io_capture.root_dir) == (
+        tmp_path / "agent_default" / "model-io"
+    ).resolve()
+
+
+def test_runtime_events_include_turn_task_id() -> None:
+    runtime = create_in_memory_runtime(model=StaticModel(message="tasked"))
+
+    events, terminal = runtime.run_turn("hello", "sess_tasked")
+
+    assert terminal.status is TerminalStatus.COMPLETED
+    assert events
+    assert all(event.task_id for event in events)
+    assert len({event.task_id for event in events}) == 1
+
+
 def test_file_task_manager_can_be_created_directly(tmp_path: Path) -> None:
     manager = FileTaskManager(root=str(tmp_path / "tui_tasks"))
 

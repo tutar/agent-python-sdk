@@ -139,7 +139,7 @@ uv run openagent-host
 模型输入输出数据默认会落到：
 
 ```text
-.openagent/data/model-io/
+.openagent/agent_default/model-io/
 ```
 
 这里会同时写：
@@ -149,8 +149,18 @@ uv run openagent-host
 
 如果你要改位置，可以在启动 host 前设置：
 
-- `OPENAGENT_DATA_ROOT`
-- `OPENAGENT_MODEL_IO_ROOT`
+- `OPENAGENT_ROOT`
+- `OPENAGENT_ROLE_ID`
+
+`openagent-host` 会从这两个值推导：
+
+- agent root: `${OPENAGENT_ROOT}/agent_<role_id|default>`
+- session root: `${OPENAGENT_ROOT}/agent_<role_id|default>/sessions`
+- binding root: `${OPENAGENT_ROOT}/agent_<role_id|default>/bindings`
+- data root: `${OPENAGENT_ROOT}/agent_<role_id|default>/data`
+- model-io root: `${OPENAGENT_ROOT}/agent_<role_id|default>/model-io`
+
+直接在 Python 里创建 `OpenAgentHostConfig(openagent_root=...)` 时，以上默认目录也会按同样规则自动推导；只有显式传入的各个 `*_root` 才会覆盖这些默认值。
 
 ## Optional: Use Firecrawl For Web Tools
 

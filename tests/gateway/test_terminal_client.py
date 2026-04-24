@@ -26,10 +26,9 @@ def _start_host(tmp_path: Path) -> tuple[Popen[str], int]:
         "ANTHROPIC_API_KEY",
     ):
         env.pop(name, None)
+    env["OPENAGENT_ROOT"] = str(tmp_path)
     env["OPENAGENT_TERMINAL_HOST"] = "127.0.0.1"
     env["OPENAGENT_TERMINAL_PORT"] = str(terminal_port)
-    env["OPENAGENT_SESSION_ROOT"] = str(tmp_path / "sessions")
-    env["OPENAGENT_BINDING_ROOT"] = str(tmp_path / "bindings")
     env["PYTHONPATH"] = os.pathsep.join([str(repo_root / "src"), str(repo_root)])
     process = Popen(
         [sys.executable, str(repo_root / "tests/gateway/support/terminal_client_host.py")],

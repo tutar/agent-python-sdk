@@ -224,6 +224,7 @@ class SimpleHarness(Harness):
                         ProgressUpdate(
                             scope="turn",
                             session_id=session_slice.session_id,
+                            task_id=self._current_task_id(),
                             summary="context_governance_report",
                             last_activity="context_report",
                             attributes=self.last_context_report.to_dict(),
@@ -662,6 +663,7 @@ class SimpleHarness(Harness):
                         value=duration_ms,
                         unit="ms",
                         session_id=session_handle,
+                        task_id=self._current_task_id(),
                         attributes={"retry_index": attempt},
                     )
                 )
@@ -869,12 +871,19 @@ class SimpleHarness(Harness):
         payload: JsonObject,
     ) -> RuntimeEvent:
         event_index = len(self.sessions.load_session(session_id).events) + 1
-        return new_event(
+        event = new_event(
             session_id=session_id,
             event_type=event_type,
             payload=payload,
             event_index=event_index,
         )
+        event.task_id = self._current_task_id()
+        return event
+
+    def _current_task_id(self) -> str | None:
+        runtime_state = getattr(self.runtime_loop, "state", None)
+        task_id = getattr(runtime_state, "task_id", None)
+        return task_id if isinstance(task_id, str) and task_id else None
 
     def _emit_terminal(
         self,
@@ -900,9 +909,13 @@ class SimpleHarness(Harness):
         return control.cancellation_check is not None and control.cancellation_check()
 
     def _emit_metric(self, metric: RuntimeMetric) -> None:
+        if metric.task_id is None:
+            metric.task_id = self._current_task_id()
         self.projection.emit_metric(metric)
 
     def _emit_progress(self, progress: ProgressUpdate) -> None:
+        if progress.task_id is None:
+            progress.task_id = self._current_task_id()
         self.projection.emit_progress(progress)
 
     def _emit_session_state(
