@@ -404,6 +404,27 @@ def test_context_governance_overflow_recovery_preserves_latest_user_message() ->
     assert contents[0] == "original user request"
 
 
+def test_context_governance_overflow_recovery_keeps_user_and_stays_under_budget() -> None:
+    governance = ContextGovernance(
+        max_tokens=12,
+        overflow_compact_to_messages=2,
+    )
+    messages = [
+        SessionMessage(role="user", content="u" * 400),
+        SessionMessage(role="assistant", content="thinking"),
+        SessionMessage(role="tool", content="tool output"),
+        SessionMessage(role="assistant", content="continuing"),
+    ]
+
+    result = governance.recover_overflow(messages)
+    recovered = [SessionMessage.from_dict(message) for message in result.messages]
+
+    assert any(message.role == "user" for message in recovered)
+    assert governance.estimate_tokens(recovered, []) <= governance.max_tokens
+    user_message = next(message for message in recovered if message.role == "user")
+    assert user_message.metadata["truncated_by_overflow_recovery"] is True
+
+
 def test_context_governance_externalizes_long_tool_result(tmp_path: Path) -> None:
     governance = ContextGovernance(
         externalize_threshold_chars=10,

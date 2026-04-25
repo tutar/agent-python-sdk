@@ -69,6 +69,9 @@ tool 结果外化和 compaction rewrite 现在都被视为 `context_engineering/
 
 - compact / overflow recovery 不能把最后一条真实 `role=user` message 裁掉
 - provider adapter 发送前也会再次校验 request 里仍存在 user message
+- overflow recovery 不能因为保留 user message 而失去预算收敛能力
+  - 如果保留最近 user 后仍然超预算，会继续移除更早的非 user 消息
+  - 还不够时，会截断这条被保留的 user message 内容
 
 这条约束用于避免长工具链 overflow 后把 transcript 尾部压成只有
 `assistant/tool`，最终触发上游 chat template 的

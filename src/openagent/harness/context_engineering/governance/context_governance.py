@@ -65,6 +65,58 @@ class ContextGovernance:
             kept_indexes.append(latest_user_index)
         return [messages[index] for index in sorted(set(kept_indexes))]
 
+    def _fit_messages_within_budget(
+        self,
+        messages: list[SessionMessage],
+    ) -> list[SessionMessage]:
+        if self.estimate_tokens(messages, []) <= self.max_tokens:
+            return list(messages)
+        latest_user_index = next(
+            (index for index in range(len(messages) - 1, -1, -1) if messages[index].role == "user"),
+            None,
+        )
+        kept = list(messages)
+        while self.estimate_tokens(kept, []) > self.max_tokens and len(kept) > 1:
+            removable_index = next(
+                (
+                    index
+                    for index in range(len(kept))
+                    if index != latest_user_index and kept[index].role != "user"
+                ),
+                None,
+            )
+            if removable_index is None:
+                break
+            del kept[removable_index]
+            if latest_user_index is not None and removable_index < latest_user_index:
+                latest_user_index -= 1
+        if latest_user_index is None or self.estimate_tokens(kept, []) <= self.max_tokens:
+            return kept
+        latest_user = kept[latest_user_index]
+        other_messages = [
+            message
+            for index, message in enumerate(kept)
+            if index != latest_user_index
+        ]
+        other_tokens = self.estimate_tokens(other_messages, [])
+        available_user_tokens = max(1, self.max_tokens - other_tokens)
+        if max(1, len(latest_user.content) // 4) <= available_user_tokens:
+            return kept
+        max_chars = max(1, available_user_tokens * 4)
+        suffix = "..."
+        truncated_content = latest_user.content[:max_chars]
+        if len(truncated_content) > len(suffix):
+            truncated_content = truncated_content[: max_chars - len(suffix)] + suffix
+        kept[latest_user_index] = SessionMessage(
+            role=latest_user.role,
+            content=truncated_content,
+            metadata={
+                **latest_user.metadata,
+                "truncated_by_overflow_recovery": True,
+            },
+        )
+        return kept
+
     def analyze(self, messages: list[SessionMessage], tools: list[str]) -> ContextReport:
         estimated_tokens = self.estimate_tokens(messages, tools)
         budget_remaining = self.max_tokens - estimated_tokens
@@ -117,6 +169,7 @@ class ContextGovernance:
             messages,
             limit=self.overflow_compact_to_messages,
         )
+        kept = self._fit_messages_within_budget(kept)
         trimmed = len(messages) - len(kept)
         return OverflowRecoveryResult(
             messages=[message.to_dict() for message in kept],

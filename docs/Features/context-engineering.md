@@ -57,6 +57,12 @@
 - provider-facing request 也会在发送前校验至少存在一条 user message
 - 这样可以避免长工具链 + overflow recovery 场景把 user query 裁掉后，再触发
   `No user query found in messages.`
+- overflow recovery 仍然必须把 request 收敛回预算内
+- 如果把最近一条 user message 补回后仍然超预算，recovery 会继续收缩：
+  - 先移除更早的非 user 消息
+  - 再在必要时截断保留下来的那条 user message
+- 被 overflow recovery 截断的 user message 会带
+  `truncated_by_overflow_recovery=true` 元数据，便于后续诊断
 
 ## 当前不支持
 
