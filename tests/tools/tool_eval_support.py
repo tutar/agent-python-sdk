@@ -1,12 +1,28 @@
 from __future__ import annotations
 
+import json
 import os
+from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlparse
 from urllib import request
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlparse
+
+from typing import Any
 
 import pytest
+
+PSEUDO_TOOL_MARKERS = ("<tool_call>", "<function=", "<parameter=", "<tool_response>")
+
+
+@dataclass(slots=True)
+class ProviderTurnResult:
+    streaming: bool
+    finish_reason: str | None
+    content: str
+    tool_calls: list[dict[str, Any]]
+    raw_response: dict[str, Any] | None = None
+    raw_events: list[dict[str, Any]] | None = None
 
 
 def load_repo_env() -> None:
@@ -82,3 +98,194 @@ def provider_summary() -> str:
     base_url = os.getenv("OPENAGENT_BASE_URL", "").strip()
     model = os.getenv("OPENAGENT_MODEL", "").strip()
     return f"provider={provider} model={model} base_url={base_url}"
+
+
+def live_tool_eval_timeout_seconds(default: float = 90.0) -> float:
+    load_repo_env()
+    raw_value = os.getenv("OPENAGENT_TOOL_EVAL_TIMEOUT_SEC", "").strip()
+    if not raw_value:
+        return default
+    try:
+        parsed = float(raw_value)
+    except ValueError:
+        return default
+    return parsed if parsed > 0 else default
+
+
+def scenario_filter_names(env_var: str) -> set[str]:
+    load_repo_env()
+    raw_value = os.getenv(env_var, "").strip()
+    if not raw_value:
+        return set()
+    return {item.strip() for item in raw_value.split(",") if item.strip()}
+
+
+def contains_pseudo_tool_markup(text: str | None) -> bool:
+    if not text:
+        return False
+    lowered = text.lower()
+    return any(marker in lowered for marker in PSEUDO_TOOL_MARKERS)
+
+
+def build_openai_function_tool(
+    *,
+    name: str,
+    description: str,
+    parameters: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": description,
+            "parameters": parameters,
+        },
+    }
+
+
+def openai_chat_completion_non_stream(
+    *,
+    base_url: str,
+    payload: dict[str, Any],
+    timeout_sec: float = 60.0,
+) -> ProviderTurnResult:
+    body = _post_json(base_url, payload, timeout_sec)
+    parsed = json.loads(body)
+    choice = parsed["choices"][0]
+    message = choice.get("message", {})
+    tool_calls = message.get("tool_calls")
+    return ProviderTurnResult(
+        streaming=False,
+        finish_reason=choice.get("finish_reason"),
+        content=message.get("content") or "",
+        tool_calls=tool_calls if isinstance(tool_calls, list) else [],
+        raw_response=parsed,
+    )
+
+
+def openai_chat_completion_stream(
+    *,
+    base_url: str,
+    payload: dict[str, Any],
+    timeout_sec: float = 60.0,
+) -> ProviderTurnResult:
+    events = _post_json_stream(base_url, payload, timeout_sec)
+    tool_call_parts: dict[int, dict[str, Any]] = {}
+    content_parts: list[str] = []
+    finish_reason: str | None = None
+    for event in events:
+        choices = event.get("choices")
+        if not isinstance(choices, list):
+            continue
+        for choice in choices:
+            if not isinstance(choice, dict):
+                continue
+            delta = choice.get("delta")
+            if isinstance(delta, dict):
+                content = delta.get("content")
+                if isinstance(content, str) and content:
+                    content_parts.append(content)
+                raw_tool_calls = delta.get("tool_calls")
+                if isinstance(raw_tool_calls, list):
+                    _accumulate_tool_call_deltas(tool_call_parts, raw_tool_calls)
+            if isinstance(choice.get("finish_reason"), str):
+                finish_reason = choice["finish_reason"]
+    return ProviderTurnResult(
+        streaming=True,
+        finish_reason=finish_reason,
+        content="".join(content_parts),
+        tool_calls=_finalize_stream_tool_calls(tool_call_parts),
+        raw_events=events,
+    )
+
+
+def _post_json(base_url: str, payload: dict[str, Any], timeout_sec: float) -> str:
+    opener = request.build_opener(request.ProxyHandler({}))
+    http_request = request.Request(
+        f"{base_url.rstrip('/')}/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    with opener.open(http_request, timeout=timeout_sec) as response:
+        return response.read().decode("utf-8")
+
+
+def _post_json_stream(
+    base_url: str,
+    payload: dict[str, Any],
+    timeout_sec: float,
+) -> list[dict[str, Any]]:
+    opener = request.build_opener(request.ProxyHandler({}))
+    http_request = request.Request(
+        f"{base_url.rstrip('/')}/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    events: list[dict[str, Any]] = []
+    with opener.open(http_request, timeout=timeout_sec) as response:
+        event_lines: list[str] = []
+        for raw_line in response:
+            line = raw_line.decode("utf-8").rstrip("\r\n")
+            if not line:
+                if event_lines:
+                    payload_text = "\n".join(event_lines)
+                    event_lines = []
+                    if payload_text == "[DONE]":
+                        break
+                    events.append(json.loads(payload_text))
+                continue
+            if line.startswith("data:"):
+                event_lines.append(line.removeprefix("data:").strip())
+        if event_lines:
+            payload_text = "\n".join(event_lines)
+            if payload_text != "[DONE]":
+                events.append(json.loads(payload_text))
+    return events
+
+
+def _accumulate_tool_call_deltas(
+    tool_call_parts: dict[int, dict[str, Any]],
+    raw_tool_calls: list[dict[str, Any]],
+) -> None:
+    for raw_item in raw_tool_calls:
+        if not isinstance(raw_item, dict):
+            continue
+        index = raw_item.get("index")
+        if not isinstance(index, int):
+            continue
+        entry = tool_call_parts.setdefault(
+            index,
+            {"id": None, "name": "", "arguments_text": ""},
+        )
+        if raw_item.get("id") is not None:
+            entry["id"] = str(raw_item["id"])
+        function = raw_item.get("function")
+        if isinstance(function, dict):
+            if function.get("name") is not None:
+                entry["name"] = str(function["name"])
+            arguments = function.get("arguments")
+            if isinstance(arguments, str):
+                entry["arguments_text"] = str(entry.get("arguments_text", "")) + arguments
+
+
+def _finalize_stream_tool_calls(tool_call_parts: dict[int, dict[str, Any]]) -> list[dict[str, Any]]:
+    tool_calls: list[dict[str, Any]] = []
+    for index in sorted(tool_call_parts):
+        entry = tool_call_parts[index]
+        arguments_text = str(entry.get("arguments_text", "")).strip()
+        parsed_arguments: dict[str, Any] = {}
+        if arguments_text:
+            loaded = json.loads(arguments_text)
+            if isinstance(loaded, dict):
+                parsed_arguments = loaded
+        tool_calls.append(
+            {
+                "id": entry.get("id"),
+                "type": "function",
+                "function": {
+                    "name": entry.get("name", ""),
+                    "arguments": parsed_arguments,
+                },
+            }
+        )
+    return tool_calls

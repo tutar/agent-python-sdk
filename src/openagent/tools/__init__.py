@@ -9,6 +9,7 @@ from openagent.tools.builtin import (
     WriteTool,
     create_builtin_commands,
     create_builtin_toolset,
+    create_local_code_edit_toolset,
 )
 from openagent.tools.commands import (
     Command,
@@ -248,4 +249,5 @@ __all__ = [
     "WriteTool",
     "create_builtin_commands",
     "create_builtin_toolset",
+    "create_local_code_edit_toolset",
 ]

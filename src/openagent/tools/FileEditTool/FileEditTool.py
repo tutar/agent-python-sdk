@@ -23,15 +23,15 @@ class FileEditTool(BuiltinToolBase):
                 {
                     "path": string_property(
                         "Path to the file to edit, relative to the current workspace root.",
-                        examples=["src/openagent/tools/FileEditTool/FileEditTool.py"],
+                        examples=["sympy/printing/defaults.py"],
                     ),
                     "old": string_property(
-                        "Exact text to replace.",
-                        examples=["old_value = 1"],
+                        "Exact text to replace. Read the file first and copy the target text exactly.",
+                        examples=["DefaultPrinting = Printable"],
                     ),
                     "new": string_property(
                         "Replacement text.",
-                        examples=["old_value = 2"],
+                        examples=["DefaultPrinting = Printable\nPrintable.__slots__ = ()"],
                     ),
                     "replace_all": boolean_property(
                         "When true, replace every exact occurrence. When false or omitted, "

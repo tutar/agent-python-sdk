@@ -26,7 +26,7 @@ class FileReadTool(BuiltinToolBase):
                 {
                     "path": string_property(
                         "Path to the file, relative to the current workspace root.",
-                        examples=["README.md", "src/openagent/tools/FileReadTool/FileReadTool.py"],
+                        examples=["README.md", "sympy/printing/defaults.py"],
                     ),
                     "offset": integer_property(
                         "Optional 1-based line number to start reading from.",
@@ -36,7 +36,7 @@ class FileReadTool(BuiltinToolBase):
                     "limit": integer_property(
                         "Optional maximum number of lines to read. Defaults to all lines up to "
                         "the per-call cap.",
-                        examples=[20, 200],
+                        examples=[20, 80],
                         minimum=1,
                     ),
                 },

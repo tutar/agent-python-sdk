@@ -8,20 +8,27 @@ import pytest
 
 from openagent.harness.providers import load_model_from_env
 from openagent.harness.runtime import SimpleHarness
+from openagent.harness.runtime.core.terminal import TurnControl
 from openagent.host.config import OpenAgentHostConfig
 from openagent.local import create_file_runtime
 from openagent.object_model import RuntimeEventType, TerminalStatus
 from openagent.session import FileSessionStore
-from openagent.tools import SimpleToolExecutor, StaticToolRegistry
+from openagent.tools import (
+    SimpleToolExecutor,
+    StaticToolRegistry,
+    create_local_code_edit_toolset,
+)
 from tests.tools.test_tool_selection_eval import (
     CORE_TOOL_SELECTION_SCENARIOS,
     ToolSelectionScenario,
 )
 from tests.tools.tool_eval_support import (
     live_tool_selection_eval_enabled,
+    live_tool_eval_timeout_seconds,
     load_repo_env,
     provider_summary,
     require_live_model_endpoint,
+    scenario_filter_names,
 )
 
 load_repo_env()
@@ -41,6 +48,9 @@ def _build_runtime(tmp_path: Path):
     return create_file_runtime(
         model=load_model_from_env(),
         session_root=str(tmp_path / "sessions"),
+        tools=create_local_code_edit_toolset(root=str(tmp_path)),
+        include_agent_tool=False,
+        include_skill_tool=False,
         openagent_root=config.openagent_root,
         role_id=config.role_id,
     )
@@ -50,6 +60,8 @@ def _run_scenario_against_runtime(
     tmp_path: Path,
     runtime,
     scenario: ToolSelectionScenario,
+    *,
+    timeout_seconds: float,
 ) -> RuntimeToolEvalRecord:
     scenario_root = tmp_path / scenario.name
     scenario_root.mkdir(parents=True, exist_ok=True)
@@ -61,6 +73,7 @@ def _run_scenario_against_runtime(
         sessions=FileSessionStore(scenario_root / "sessions"),
         tools=registry,
         executor=SimpleToolExecutor(registry),
+        max_iterations=4,
         openagent_root=runtime.openagent_root,
         role_id=runtime.role_id,
         role_definition=runtime.role_definition,
@@ -69,7 +82,11 @@ def _run_scenario_against_runtime(
     session.metadata["workdir"] = str(scenario_root)
     harness.sessions.save_session(session.session_id, session)
 
-    events, terminal = harness.run_turn(scenario.prompt, session.session_id)
+    events, terminal = harness.run_turn(
+        scenario.prompt,
+        session.session_id,
+        control=TurnControl(timeout_seconds=timeout_seconds),
+    )
     used_tools = [
         str(event.payload["tool_name"])
         for event in events
@@ -127,8 +144,8 @@ def test_runtime_tool_surface_exposes_actual_registry(tmp_path: Path) -> None:
     report_path = tmp_path / "runtime_tool_surface.json"
     report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    assert report["tool_count"] >= 6
-    assert {"Read", "Write", "Edit", "Glob", "Grep", "Bash"}.issubset(set(tool_names))
+    assert report["tool_count"] == 6
+    assert set(tool_names) == {"Read", "Write", "Edit", "Glob", "Grep", "Bash"}
     assert report_path.exists()
 
 
@@ -144,10 +161,13 @@ def test_live_runtime_tool_surface_report(tmp_path: Path) -> None:
     runtime = _build_runtime(tmp_path)
     records = runtime.tools.list_tool_records()
     tool_names = {record.tool_name for record in records}
+    selected_scenarios = scenario_filter_names("OPENAGENT_TOOL_SURFACE_SCENARIOS")
+    timeout_seconds = live_tool_eval_timeout_seconds()
     scenario_by_tool = {
         scenario.expected_tool: scenario
         for scenario in CORE_TOOL_SELECTION_SCENARIOS
         if scenario.expected_tool in tool_names
+        and (not selected_scenarios or scenario.name in selected_scenarios)
     }
 
     eval_records: list[RuntimeToolEvalRecord] = []
@@ -164,7 +184,14 @@ def test_live_runtime_tool_surface_report(tmp_path: Path) -> None:
                 )
             )
             continue
-        eval_records.append(_run_scenario_against_runtime(tmp_path, runtime, scenario))
+        eval_records.append(
+            _run_scenario_against_runtime(
+                tmp_path,
+                runtime,
+                scenario,
+                timeout_seconds=timeout_seconds,
+            )
+        )
 
     report = {
         "provider": provider_summary(),

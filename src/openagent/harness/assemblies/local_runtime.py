@@ -45,7 +45,9 @@ from openagent.shared import (
     resolve_path_env,
 )
 from openagent.tools import (
+    AgentTool,
     SimpleToolExecutor,
+    SkillTool,
     SkillInvocationBridge,
     StaticToolRegistry,
     ToolDefinition,
@@ -58,6 +60,8 @@ def create_file_runtime_assembly(
     model: ModelProviderAdapter,
     session_root: str,
     tools: list[ToolDefinition] | None = None,
+    include_agent_tool: bool = True,
+    include_skill_tool: bool = True,
     observability: AgentObservability | None = None,
     model_io_root: str | None = None,
     openagent_root: str | None = None,
@@ -93,8 +97,9 @@ def create_file_runtime_assembly(
     registry = StaticToolRegistry(
         _resolve_runtime_tools(
             tools=tools,
-            agent_handler=multi_agent.as_agent_handler(),
+            agent_handler=multi_agent.as_agent_handler() if include_agent_tool else None,
             skill_bridge=resolved_role_runtime.skill_bridge,
+            include_skill_tool=include_skill_tool,
             extra_tools=resolved_role_runtime.mounted_mcp_tools,
         )
     )
@@ -151,40 +156,30 @@ def _resolve_runtime_tools(
     ) = None,
     *,
     skill_bridge: SkillInvocationBridge | None = None,
+    include_skill_tool: bool = True,
     extra_tools: list[ToolDefinition] | None = None,
 ) -> list[ToolDefinition]:
     role_extra_tools = list(extra_tools or [])
     if tools is not None:
         resolved = list(tools) + role_extra_tools
         if agent_handler is not None and not any(tool.name == "Agent" for tool in resolved):
-            resolved.extend(
-                cast(
-                    list[ToolDefinition],
-                    create_builtin_toolset(
-                        agent_handler=agent_handler,
-                        skill_bridge=skill_bridge,
-                    ),
-                )
-            )
-            deduped: dict[str, ToolDefinition] = {}
-            for tool in resolved:
-                deduped[tool.name] = tool
-            return list(deduped.values())
-        if skill_bridge is not None and not any(tool.name == "Skill" for tool in resolved):
-            resolved.extend(
-                cast(
-                    list[ToolDefinition],
-                    create_builtin_toolset(skill_bridge=skill_bridge),
-                )
-            )
-            deduped: dict[str, ToolDefinition] = {}
-            for tool in resolved:
-                deduped[tool.name] = tool
-            return list(deduped.values())
-        return resolved
+            resolved.append(cast(ToolDefinition, AgentTool(agent_handler)))
+        if (
+            include_skill_tool
+            and skill_bridge is not None
+            and not any(tool.name == "Skill" for tool in resolved)
+        ):
+            resolved.append(cast(ToolDefinition, SkillTool(skill_bridge)))
+        deduped: dict[str, ToolDefinition] = {}
+        for tool in resolved:
+            deduped[tool.name] = tool
+        return list(deduped.values())
     builtins = cast(
         list[ToolDefinition],
-        create_builtin_toolset(agent_handler=agent_handler, skill_bridge=skill_bridge),
+        create_builtin_toolset(
+            agent_handler=agent_handler,
+            skill_bridge=skill_bridge if include_skill_tool else None,
+        ),
     )
     return [*builtins, *role_extra_tools]
 

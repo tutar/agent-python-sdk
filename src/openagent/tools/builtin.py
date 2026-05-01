@@ -32,6 +32,15 @@ ReadTool = FileReadTool
 WriteTool = FileWriteTool
 EditTool = FileEditTool
 
+MINIMAL_LOCAL_CODE_EDIT_TOOL_NAMES = (
+    "Read",
+    "Write",
+    "Edit",
+    "Glob",
+    "Grep",
+    "Bash",
+)
+
 
 def create_builtin_toolset(
     *,
@@ -59,6 +68,22 @@ def create_builtin_toolset(
     if skill_bridge is not None:
         tools.append(SkillTool(skill_bridge))
     return tools
+
+
+def create_local_code_edit_toolset(
+    *,
+    root: str = ".",
+) -> list[object]:
+    """Create a minimal local code-editing toolset for evals and batch runtimes."""
+
+    return [
+        FileReadTool(root),
+        FileWriteTool(root),
+        FileEditTool(root),
+        GlobTool(root),
+        GrepTool(root),
+        BashTool(root),
+    ]
 
 
 def create_builtin_commands() -> list[Command]:

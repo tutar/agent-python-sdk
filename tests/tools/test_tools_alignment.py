@@ -39,6 +39,7 @@ from openagent.tools import (
     WriteTool,
     create_builtin_commands,
     create_builtin_toolset,
+    create_local_code_edit_toolset,
 )
 from openagent.tools.AgentTool import DESCRIPTION as AGENT_DESCRIPTION
 from openagent.tools.AskUserQuestionTool import DESCRIPTION as ASK_USER_QUESTION_DESCRIPTION
@@ -675,6 +676,10 @@ def test_local_runtime_defaults_to_builtin_tool_baseline(tmp_path: Path) -> None
     }
     assert expected.issubset(file_names)
 
+def test_minimal_local_code_edit_toolset_exposes_only_core_workspace_tools(tmp_path: Path) -> None:
+    tool_names = {tool.name for tool in create_local_code_edit_toolset(root=str(tmp_path))}
+
+    assert tool_names == {"Read", "Write", "Edit", "Glob", "Grep", "Bash"}
 
 def test_builtin_file_tools_require_explicit_working_directory(tmp_path: Path) -> None:
     tool = WriteTool(str(tmp_path))

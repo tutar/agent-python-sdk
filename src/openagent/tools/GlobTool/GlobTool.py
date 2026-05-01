@@ -31,7 +31,7 @@ class GlobTool(BuiltinToolBase):
                     ),
                     "path": string_property(
                         "Optional subdirectory relative to the workspace root to search within.",
-                        examples=["src", "tests/tools"],
+                        examples=["sympy", "tests/tools"],
                     ),
                     "limit": integer_property(
                         "Optional maximum number of matching files to return.",

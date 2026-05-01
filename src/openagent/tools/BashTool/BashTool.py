@@ -31,7 +31,11 @@ class BashTool(BuiltinToolBase):
                 {
                     "command": string_property(
                         "Full shell command to execute in the current workspace root.",
-                        examples=["ls -la", "pwd", "pytest -q tests/tools/test_tools_alignment.py"],
+                        examples=[
+                            "pytest -q tests/tools/test_tools_alignment.py",
+                            "python -m pytest -q sympy/core/tests/test_symbol.py",
+                            "git diff --stat",
+                        ],
                     ),
                     "timeout_ms": integer_property(
                         "Optional timeout in milliseconds for the command.",
