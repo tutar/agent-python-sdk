@@ -1,4 +1,4 @@
-"""Workspace-bound text file reader."""
+"""Text file reader."""
 
 from __future__ import annotations
 

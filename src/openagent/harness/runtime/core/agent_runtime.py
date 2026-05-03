@@ -65,6 +65,7 @@ from openagent.object_model import (
     TerminalState,
     ToolResult,
 )
+from openagent.object_model.base import to_json_value
 from openagent.observability import (
     AgentObservability,
     ProgressUpdate,
@@ -447,8 +448,42 @@ class SimpleHarness(Harness):
         )
         return workspace
 
-    def _new_session_message(self, role: str, content: JsonValue) -> SessionMessage:
-        return SessionMessage(role=role, content=content)
+    def _new_session_message(
+        self,
+        role: str,
+        content: JsonValue,
+        *,
+        metadata: JsonObject | None = None,
+    ) -> SessionMessage:
+        return SessionMessage(role=role, content=content, metadata=dict(metadata or {}))
+
+    def _assistant_tool_call_message(
+        self,
+        *,
+        assistant_message: str | None,
+        tool_calls: list[ToolCall],
+    ) -> SessionMessage:
+        return self._new_session_message(
+            role="assistant",
+            content=assistant_message or "",
+            metadata={"tool_calls": [tool_call.to_dict() for tool_call in tool_calls]},
+        )
+
+    def _append_assistant_tool_calls(
+        self,
+        session: SessionRecord,
+        *,
+        assistant_message: str | None,
+        tool_calls: list[ToolCall],
+    ) -> None:
+        if not tool_calls:
+            return
+        session.messages.append(
+            self._assistant_tool_call_message(
+                assistant_message=assistant_message,
+                tool_calls=tool_calls,
+            )
+        )
 
     def schedule_memory_maintenance(self, session: SessionRecord) -> None:
         self._last_memory_session = session
@@ -984,19 +1019,30 @@ class SimpleHarness(Harness):
                 message_content = self.context_governance.tool_result_transcript_content(result)
             else:
                 message_content = result.content
+            metadata = {
+                **dict(result.metadata or {}),
+                "tool_name": result.tool_name,
+                "success": result.success,
+                "truncated": bool(result.truncated) if result.truncated is not None else False,
+                "persisted_ref": result.persisted_ref,
+                "structured_content": result.structured_content,
+            }
             session.messages.append(
                 SessionMessage(
                     role="tool",
                     content=message_content,
-                    metadata={
-                        **dict(result.metadata or {}),
-                        "tool_name": result.tool_name,
-                        "success": result.success,
-                        "truncated": bool(result.truncated) if result.truncated is not None else False,
-                        "persisted_ref": result.persisted_ref,
-                        "structured_content": result.structured_content,
-                    },
+                    metadata=metadata,
                 )
+            )
+            self._capture_model_io_lifecycle(
+                session=session,
+                event_type="tool_result_appended",
+                payload={
+                    "tool_name": result.tool_name,
+                    "success": result.success,
+                    "metadata": metadata,
+                    "content": to_json_value(message_content),
+                },
             )
 
     def _append_event(self, session: SessionRecord, event: RuntimeEvent) -> RuntimeEvent:
@@ -1054,6 +1100,15 @@ class SimpleHarness(Harness):
                 event_type=event_type,
                 payload=terminal.to_dict(),
             ),
+        )
+        self._capture_model_io_lifecycle(
+            session=session,
+            event_type=(
+                "turn_completed"
+                if event_type is RuntimeEventType.TURN_COMPLETED
+                else "turn_failed"
+            ),
+            payload=terminal.to_dict(),
         )
         session.status = SessionStatus.IDLE
         self._run_post_turn_processors(session_handle, session)
@@ -1173,6 +1228,44 @@ class SimpleHarness(Harness):
             retry_index=retry_index,
             streaming=streaming,
             error=error,
+        )
+
+    def _capture_model_io_lifecycle(
+        self,
+        *,
+        session: SessionRecord,
+        event_type: str,
+        payload: JsonObject,
+        capture_id: str | None = None,
+    ) -> None:
+        lease = self.sessions.get_active_lease(session.session_id)
+        request_metadata = getattr(self.runtime_loop.state, "request_metadata", None)
+        metadata = request_metadata if isinstance(request_metadata, dict) else {}
+        self.model_io_capture.capture_lifecycle_event(
+            session_id=session.session_id,
+            event_type=event_type,
+            payload=payload,
+            agent_id=session.agent_id,
+            harness_instance_id=lease.harness_instance_id if lease is not None else None,
+            provider_adapter=type(self.model).__name__,
+            provider_family=self._provider_family(),
+            model=str(getattr(self.model, "model", "")) or None,
+            capture_id=capture_id,
+            trigger=(
+                str(metadata.get("trigger"))
+                if isinstance(metadata.get("trigger"), str)
+                else None
+            ),
+            turn_id=(
+                str(metadata.get("turn_id"))
+                if isinstance(metadata.get("turn_id"), str)
+                else self._current_task_id()
+            ),
+            turn_iteration=(
+                metadata.get("turn_iteration")
+                if isinstance(metadata.get("turn_iteration"), int)
+                else None
+            ),
         )
 
     def _provider_family(self) -> str | None:

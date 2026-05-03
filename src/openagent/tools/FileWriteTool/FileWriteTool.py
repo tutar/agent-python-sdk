@@ -1,4 +1,4 @@
-"""Workspace-bound file writer."""
+"""File writer."""
 
 from __future__ import annotations
 

@@ -55,6 +55,22 @@ def _tool_selection_failure_details(model_io_root: Path) -> str:
     )
 
 
+def _content_edit_failure_details(
+    model_io_root: Path,
+    *,
+    target_file: Path,
+    used_tools: list[str],
+    result_payloads: list[dict[str, object]],
+) -> str:
+    file_text = target_file.read_text(encoding="utf-8") if target_file.exists() else "<missing>"
+    return (
+        f"used_tools={used_tools} "
+        f"result_payloads={json.dumps(result_payloads, ensure_ascii=False)} "
+        f"final_file_text={json.dumps(file_text, ensure_ascii=False)} "
+        f"{_tool_selection_failure_details(model_io_root)}"
+    )
+
+
 def _tool_result_projection_failure_details(model_io_root: Path) -> str:
     row = latest_provider_row_with_tool_messages(model_io_root)
     if row is None:
@@ -140,6 +156,10 @@ def _prepare_grep_workspace(root: Path) -> None:
 
 def _prepare_bash_workspace(root: Path) -> None:
     del root
+
+
+def _prepare_content_edit_workspace(root: Path) -> None:
+    (root / "test.txt").write_text("联系人：张三\n", encoding="utf-8")
 
 
 def _assert_read_effect(
@@ -380,3 +400,72 @@ def test_live_model_grep_tool_selection_diagnostic_snapshot(tmp_path: Path) -> N
     assert request.tool_definitions
     assert exchange.provider_payload is not None
     assert exchange.provider_payload.get("messages")
+
+
+@pytest.mark.skipif(
+    not _live_tool_selection_eval_enabled(),
+    reason=(
+        "set OPENAGENT_RUN_TOOL_SELECTION_EVAL=1 plus OPENAGENT_MODEL and "
+        "OPENAGENT_BASE_URL to run live file-content edit smoke tests"
+    ),
+)
+def test_live_model_updates_file_content_smoke(tmp_path: Path) -> None:
+    require_live_model_endpoint()
+    _prepare_content_edit_workspace(tmp_path)
+    model = load_model_from_env()
+    toolset = [
+        tool
+        for tool in create_builtin_toolset(root=str(tmp_path))
+        if tool.name in {READ_TOOL_NAME, EDIT_TOOL_NAME, WRITE_TOOL_NAME, BASH_TOOL_NAME}
+    ]
+    registry = StaticToolRegistry(toolset)
+    model_io_root = tmp_path / "model-io"
+    harness = SimpleHarness(
+        model=model,
+        sessions=FileSessionStore(tmp_path / "sessions"),
+        tools=registry,
+        executor=SimpleToolExecutor(registry),
+        model_io_capture=FileModelIoCapture(model_io_root),
+        session_root_dir=str(tmp_path / "sessions"),
+    )
+    session = harness.sessions.load_session("live_content_edit_smoke")
+    session.metadata["workdir"] = str(tmp_path)
+    harness.sessions.save_session(session.session_id, session)
+
+    prompt = "把 test.txt 中的张三替换为李四，只修改这个文件。"
+    events, terminal = harness.run_turn(prompt, session.session_id)
+
+    used_tools = [
+        str(event.payload["tool_name"])
+        for event in events
+        if event.event_type is RuntimeEventType.TOOL_STARTED
+    ]
+    result_payloads = [
+        event.payload
+        for event in events
+        if event.event_type is RuntimeEventType.TOOL_RESULT
+    ]
+    target_file = tmp_path / "test.txt"
+    final_text = target_file.read_text(encoding="utf-8")
+    report = {
+        "provider": provider_summary(),
+        "prompt": prompt,
+        "used_tools": used_tools,
+        "result_payloads": result_payloads,
+        "final_file_text": final_text,
+        "terminal_status": terminal.status.value,
+    }
+    report_path = tmp_path / "live_content_edit_smoke.json"
+    report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    assert terminal.status is TerminalStatus.COMPLETED, (
+        "turn did not complete; "
+        f"{provider_summary()} "
+        f"{_content_edit_failure_details(model_io_root, target_file=target_file, used_tools=used_tools, result_payloads=result_payloads)}"
+    )
+    assert "李四" in final_text and "张三" not in final_text, (
+        "model did not update file content as requested; "
+        f"{provider_summary()} "
+        f"{_content_edit_failure_details(model_io_root, target_file=target_file, used_tools=used_tools, result_payloads=result_payloads)}"
+    )
+    assert report_path.exists()

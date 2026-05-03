@@ -15,3 +15,4 @@ class TurnState(SerializableModel):
     requires_action: bool = False
     task_id: str | None = None
     api_duration_ms: float = 0.0
+    request_metadata: JsonObject = field(default_factory=dict)

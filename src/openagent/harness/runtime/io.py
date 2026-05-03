@@ -109,6 +109,7 @@ class ModelIoRecord(SerializableModel):
     retry_index: int
     status: str
     assembled_request: JsonObject
+    request_messages_before_projection: list[JsonObject] = field(default_factory=list)
     provider_projected_messages: list[JsonObject] = field(default_factory=list)
     provider_payload: JsonObject | None = None
     provider_response_raw: JsonObject | None = None
@@ -119,8 +120,30 @@ class ModelIoRecord(SerializableModel):
     reasoning: JsonValue | None = None
     usage: JsonObject | None = None
     stream_deltas: list[str] = field(default_factory=list)
+    trigger: str | None = None
+    turn_id: str | None = None
+    turn_iteration: int | None = None
+    tool_replay_window: list[JsonObject] = field(default_factory=list)
     error: str | None = None
     record_path: str | None = None
+
+
+@dataclass(slots=True)
+class ModelIoLifecycleRecord(SerializableModel):
+    lifecycle_id: str
+    timestamp: str
+    session_id: str
+    event_type: str
+    payload: JsonObject = field(default_factory=dict)
+    agent_id: str | None = None
+    harness_instance_id: str | None = None
+    provider_adapter: str | None = None
+    provider_family: str | None = None
+    model: str | None = None
+    capture_id: str | None = None
+    trigger: str | None = None
+    turn_id: str | None = None
+    turn_iteration: int | None = None
 
 
 class ModelIoCapture(Protocol):
@@ -152,6 +175,23 @@ class ModelIoCapture(Protocol):
         retry_index: int,
         streaming: bool,
         error: Exception,
+    ) -> None: ...
+
+    def capture_lifecycle_event(
+        self,
+        *,
+        session_id: str,
+        event_type: str,
+        payload: JsonObject,
+        agent_id: str | None = None,
+        harness_instance_id: str | None = None,
+        provider_adapter: str | None = None,
+        provider_family: str | None = None,
+        model: str | None = None,
+        capture_id: str | None = None,
+        trigger: str | None = None,
+        turn_id: str | None = None,
+        turn_iteration: int | None = None,
     ) -> None: ...
 
 
@@ -212,6 +252,37 @@ class NoOpModelIoCapture:
             error,
         )
 
+    def capture_lifecycle_event(
+        self,
+        *,
+        session_id: str,
+        event_type: str,
+        payload: JsonObject,
+        agent_id: str | None = None,
+        harness_instance_id: str | None = None,
+        provider_adapter: str | None = None,
+        provider_family: str | None = None,
+        model: str | None = None,
+        capture_id: str | None = None,
+        trigger: str | None = None,
+        turn_id: str | None = None,
+        turn_iteration: int | None = None,
+    ) -> None:
+        del (
+            session_id,
+            event_type,
+            payload,
+            agent_id,
+            harness_instance_id,
+            provider_adapter,
+            provider_family,
+            model,
+            capture_id,
+            trigger,
+            turn_id,
+            turn_iteration,
+        )
+
 
 @dataclass(slots=True)
 class FileModelIoCapture:
@@ -226,6 +297,7 @@ class FileModelIoCapture:
     _root_dir: Path = field(init=False, repr=False)
     _records_dir: Path = field(init=False, repr=False)
     _index_path: Path = field(init=False, repr=False)
+    _lifecycle_path: Path = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.data_projection is None:
@@ -233,6 +305,7 @@ class FileModelIoCapture:
         self._root_dir = Path(self.root_dir)
         self._records_dir = self._root_dir / "records"
         self._index_path = self._root_dir / "index.jsonl"
+        self._lifecycle_path = self._root_dir / "turn-lifecycle.jsonl"
         self._records_dir.mkdir(parents=True, exist_ok=True)
         self._index_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -250,6 +323,9 @@ class FileModelIoCapture:
         retry_index: int,
         streaming: bool,
     ) -> None:
+        request_metadata = (
+            request.request_metadata if isinstance(request.request_metadata, dict) else {}
+        )
         response_dict = exchange.response.to_dict() if exchange is not None else None
         tool_call_values = (
             response_dict.get("tool_calls", []) if isinstance(response_dict, dict) else []
@@ -264,8 +340,9 @@ class FileModelIoCapture:
         provider_projected_messages = _provider_projected_messages(
             exchange.provider_payload if exchange is not None else None
         )
+        capture_id = uuid.uuid4().hex
         record = ModelIoRecord(
-            capture_id=uuid.uuid4().hex,
+            capture_id=capture_id,
             timestamp=datetime.now(UTC).isoformat(),
             session_id=session_id,
             agent_id=agent_id,
@@ -277,6 +354,7 @@ class FileModelIoCapture:
             retry_index=retry_index,
             status="completed",
             assembled_request=request.to_dict(),
+            request_messages_before_projection=_request_messages_before_projection(request),
             provider_projected_messages=provider_projected_messages,
             provider_payload=exchange.provider_payload if exchange is not None else None,
             provider_response_raw=(
@@ -295,8 +373,32 @@ class FileModelIoCapture:
                 if exchange is not None and self.write_stream_deltas
                 else []
             ),
+            trigger=_request_metadata_string(request_metadata, "trigger"),
+            turn_id=_request_metadata_string(request_metadata, "turn_id"),
+            turn_iteration=_request_metadata_int(request_metadata, "turn_iteration"),
+            tool_replay_window=_tool_replay_window(request),
         )
         self._write_record(record)
+        self.capture_lifecycle_event(
+            session_id=session_id,
+            event_type="model_response_parsed",
+            payload={
+                "assistant_message": assistant_message,
+                "tool_calls": tool_calls,
+                "usage": dict(usage) if isinstance(usage, dict) else None,
+                "request_messages_before_projection": record.request_messages_before_projection,
+                "provider_projected_messages": provider_projected_messages,
+            },
+            agent_id=agent_id,
+            harness_instance_id=harness_instance_id,
+            provider_adapter=provider_adapter,
+            provider_family=provider_family,
+            model=model,
+            capture_id=capture_id,
+            trigger=record.trigger,
+            turn_id=record.turn_id,
+            turn_iteration=record.turn_iteration,
+        )
 
     def capture_error(
         self,
@@ -312,8 +414,12 @@ class FileModelIoCapture:
         streaming: bool,
         error: Exception,
     ) -> None:
+        request_metadata = (
+            request.request_metadata if isinstance(request.request_metadata, dict) else {}
+        )
+        capture_id = uuid.uuid4().hex
         record = ModelIoRecord(
-            capture_id=uuid.uuid4().hex,
+            capture_id=capture_id,
             timestamp=datetime.now(UTC).isoformat(),
             session_id=session_id,
             agent_id=agent_id,
@@ -325,9 +431,65 @@ class FileModelIoCapture:
             retry_index=retry_index,
             status="failed",
             assembled_request=request.to_dict(),
+            request_messages_before_projection=_request_messages_before_projection(request),
+            trigger=_request_metadata_string(request_metadata, "trigger"),
+            turn_id=_request_metadata_string(request_metadata, "turn_id"),
+            turn_iteration=_request_metadata_int(request_metadata, "turn_iteration"),
+            tool_replay_window=_tool_replay_window(request),
             error=f"{type(error).__name__}: {error}",
         )
         self._write_record(record)
+        self.capture_lifecycle_event(
+            session_id=session_id,
+            event_type="model_response_failed",
+            payload={
+                "error": record.error,
+                "request_messages_before_projection": record.request_messages_before_projection,
+            },
+            agent_id=agent_id,
+            harness_instance_id=harness_instance_id,
+            provider_adapter=provider_adapter,
+            provider_family=provider_family,
+            model=model,
+            capture_id=capture_id,
+            trigger=record.trigger,
+            turn_id=record.turn_id,
+            turn_iteration=record.turn_iteration,
+        )
+
+    def capture_lifecycle_event(
+        self,
+        *,
+        session_id: str,
+        event_type: str,
+        payload: JsonObject,
+        agent_id: str | None = None,
+        harness_instance_id: str | None = None,
+        provider_adapter: str | None = None,
+        provider_family: str | None = None,
+        model: str | None = None,
+        capture_id: str | None = None,
+        trigger: str | None = None,
+        turn_id: str | None = None,
+        turn_iteration: int | None = None,
+    ) -> None:
+        record = ModelIoLifecycleRecord(
+            lifecycle_id=uuid.uuid4().hex,
+            timestamp=datetime.now(UTC).isoformat(),
+            session_id=session_id,
+            event_type=event_type,
+            payload=_coerce_payload(payload),
+            agent_id=agent_id,
+            harness_instance_id=harness_instance_id,
+            provider_adapter=provider_adapter,
+            provider_family=provider_family,
+            model=model,
+            capture_id=capture_id,
+            trigger=trigger,
+            turn_id=turn_id,
+            turn_iteration=turn_iteration,
+        )
+        self._write_lifecycle_record(record)
 
     def _write_record(self, record: ModelIoRecord) -> None:
         record_dir = self._records_dir / record.session_id
@@ -342,6 +504,13 @@ class FileModelIoCapture:
                 index_file.write(json.dumps(record_payload, ensure_ascii=False))
                 index_file.write("\n")
         self.data_projection.emit_model_io_record(record)
+
+    def _write_lifecycle_record(self, record: ModelIoLifecycleRecord) -> None:
+        payload = json.dumps(record.to_dict(), ensure_ascii=False)
+        with self._lock:
+            with self._lifecycle_path.open("a", encoding="utf-8") as lifecycle_file:
+                lifecycle_file.write(payload)
+                lifecycle_file.write("\n")
 
     def _summarize_response(self, raw_response: JsonObject | None) -> JsonObject | None:
         if raw_response is None:
@@ -372,3 +541,34 @@ def _provider_projected_messages(provider_payload: JsonObject | None) -> list[Js
     if not isinstance(raw_messages, list):
         return []
     return [dict(item) for item in raw_messages if isinstance(item, dict)]
+
+
+def _request_messages_before_projection(request: ModelTurnRequest) -> list[JsonObject]:
+    return [dict(message) for message in request.messages if isinstance(message, dict)]
+
+
+def _tool_replay_window(request: ModelTurnRequest, limit: int = 6) -> list[JsonObject]:
+    replay_messages = [
+        dict(message)
+        for message in request.messages
+        if isinstance(message, dict) and str(message.get("role", "")) in {"assistant", "tool"}
+    ]
+    if limit <= 0:
+        return replay_messages
+    return replay_messages[-limit:]
+
+
+def _request_metadata_string(metadata: JsonObject, key: str) -> str | None:
+    value = metadata.get(key)
+    if isinstance(value, str) and value.strip():
+        return value
+    return None
+
+
+def _request_metadata_int(metadata: JsonObject, key: str) -> int | None:
+    value = metadata.get(key)
+    return value if isinstance(value, int) else None
+
+
+def _coerce_payload(payload: JsonObject) -> JsonObject:
+    return {str(key): to_json_value(value) for key, value in payload.items()}

@@ -1091,6 +1091,59 @@ def test_openai_adapter_downgrades_structured_tool_result_to_text() -> None:
     }
 
 
+def test_openai_adapter_projects_assistant_tool_call_replay() -> None:
+    client = FakeInstructorClient(structured_result=FakeRespondAction(message="ok"))
+    adapter = openai_adapter(
+        model="gpt-test",
+        base_url="http://127.0.0.1:8001",
+        instructor_client=client,
+    )
+
+    adapter.generate(
+        ModelTurnRequest(
+            session_id="sess_tool_replay",
+            messages=[
+                {"role": "user", "content": "change file"},
+                {
+                    "role": "assistant",
+                    "content": "Let me update that.",
+                    "metadata": {
+                        "tool_calls": [
+                            {
+                                "tool_name": "Edit",
+                                "arguments": {"path": "test.txt", "search": "张三", "replace": "李四"},
+                                "call_id": "toolu_edit_1",
+                            }
+                        ]
+                    },
+                },
+                {
+                    "role": "tool",
+                    "content": [text_block("updated 1 occurrence")],
+                    "metadata": {"tool_use_id": "toolu_edit_1", "tool_name": "Edit"},
+                },
+            ],
+        )
+    )
+
+    messages_payload = client.seen_create_kwargs["messages"]
+    assert isinstance(messages_payload, list)
+    assert messages_payload[1]["role"] == "assistant"
+    assert messages_payload[1]["content"] == "Let me update that."
+    assert messages_payload[1]["tool_calls"] == [
+        {
+            "id": "toolu_edit_1",
+            "type": "function",
+            "function": {
+                "name": "Edit",
+                "arguments": '{"path":"test.txt","search":"张三","replace":"李四"}',
+            },
+        }
+    ]
+    assert messages_payload[2]["role"] == "tool"
+    assert messages_payload[2]["tool_call_id"] == "toolu_edit_1"
+
+
 def test_anthropic_adapter_preserves_text_and_image_tool_result_blocks() -> None:
     client = FakeInstructorClient(structured_result=FakeRespondAction(message="ok"))
     adapter = anthropic_adapter(
@@ -1238,16 +1291,33 @@ def test_model_io_capture_persists_request_and_response_records(tmp_path: Path) 
     row = rows[0]
     assert row["session_id"] == "sess_capture"
     assert row["assembled_request"]["messages"][-1]["content"] == "hello"
+    assert row["request_messages_before_projection"] == row["assembled_request"]["messages"]
     assert row["assembled_request"]["short_term_memory"]["summary"]
     assert row["provider_payload"]["model"] == "gpt-test"
     assert row["provider_projected_messages"] == [{"role": "user"}]
     assert row["provider_projected_messages"] == row["provider_payload"]["messages"]
+    assert row["trigger"] == "initial_user_turn"
+    assert row["turn_id"] is not None
+    assert row["turn_iteration"] == 1
+    assert row["tool_replay_window"] == []
     assert row["provider_response_raw"]["usage"]["prompt_tokens"] == 3
     assert row["parsed_response"]["assistant_message"] == "captured"
     assert row["reasoning"] == "deliberation"
     assert row["record_path"]
     record = json.loads(Path(row["record_path"]).read_text(encoding="utf-8"))
     assert record["capture_id"] == row["capture_id"]
+    lifecycle_rows = [
+        json.loads(line)
+        for line in (model_io_root / "turn-lifecycle.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert [entry["event_type"] for entry in lifecycle_rows] == [
+        "user_message_appended",
+        "model_request_started",
+        "model_response_parsed",
+        "turn_completed",
+    ]
+    assert lifecycle_rows[1]["trigger"] == "initial_user_turn"
+    assert lifecycle_rows[1]["turn_iteration"] == 1
 
 
 def test_streaming_model_io_capture_persists_usage_and_provider_exchange(tmp_path: Path) -> None:
@@ -1348,3 +1418,40 @@ def test_model_io_capture_keeps_canonical_and_provider_message_views_distinct(tm
         {"role": "user", "content": "wire user"},
     ]
     assert row["assembled_request"]["messages"] != row["provider_projected_messages"]
+
+
+def test_model_io_capture_records_tool_replay_window_and_lifecycle(tmp_path: Path) -> None:
+    model_io_root = tmp_path / "data" / "model-io"
+    tool = EchoTool()
+    registry = StaticToolRegistry([tool])
+    harness = SimpleHarness(
+        model=ToolThenReplyModel(
+            responses=[
+                ModelTurnResponse(tool_calls=[ToolCall(tool_name="echo", arguments={"text": "x"})]),
+                ModelTurnResponse(assistant_message="done"),
+            ]
+        ),
+        sessions=FileSessionStore(tmp_path / "sessions"),
+        tools=registry,
+        executor=SimpleToolExecutor(registry),
+        model_io_capture=FileModelIoCapture(model_io_root),
+        session_root_dir=tmp_path / "agent_default" / "sessions",
+    )
+
+    harness.run_turn("use tool", "sess_replay_window")
+
+    rows = [
+        json.loads(line) for line in (model_io_root / "index.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert len(rows) == 2
+    follow_up = rows[-1]
+    assert follow_up["trigger"] == "tool_continuation"
+    assert follow_up["turn_iteration"] == 2
+    assert [message["role"] for message in follow_up["tool_replay_window"]] == ["assistant", "tool"]
+    assert follow_up["tool_replay_window"][0]["metadata"]["tool_calls"][0]["call_id"] == "toolu_1"
+    lifecycle_rows = [
+        json.loads(line)
+        for line in (model_io_root / "turn-lifecycle.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert any(entry["event_type"] == "assistant_tool_call_appended" for entry in lifecycle_rows)
+    assert any(entry["event_type"] == "tool_result_appended" for entry in lifecycle_rows)

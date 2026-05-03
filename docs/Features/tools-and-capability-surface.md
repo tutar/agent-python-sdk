@@ -55,6 +55,8 @@
   - live core-tool evals are environment-gated and can reuse the current model config by setting
     `OPENAGENT_RUN_TOOL_SELECTION_EVAL=1` together with `OPENAGENT_PROVIDER`,
     `OPENAGENT_BASE_URL`, and `OPENAGENT_MODEL`
+  - the same live-eval gate also covers a real-model file-edit smoke test that verifies final
+    workspace content, rather than forcing a specific `Read/Edit` tool path
   - a runtime tool-surface eval can enumerate the actual mounted tool registry and report which
     tools are only disclosed vs which have live task scenarios
 - pluggable web backends for builtin web tools
@@ -72,6 +74,7 @@
 - tool provenance / visibility metadata
 - MCP tool / prompt / skill adaptation seam
 - runtime 默认注入 builtin tool baseline；host 默认 demo tools 只是额外叠加
+- runtime 默认不注入 `Agent` bridge；需要 delegation 时显式开启 `include_agent_tool=True`
 - builtin file / shell tools 默认作用于当前 session/subagent 的 workspace
 - builtin file / shell tools 只在显式 `ToolExecutionContext.working_directory` 下执行，不再存在全局 workspace fallback
 - `Bash` 在自己 workspace 内默认允许执行，但不能删除或替换 workspace 根目录本身；越界访问仍需授权

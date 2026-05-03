@@ -48,6 +48,7 @@
 
 - file-backed model dataset capture under `.openagent/agent_<role_id|default>/local-agent/model-io`
 - append-only `index.jsonl`
+- append-only `turn-lifecycle.jsonl`
 - per-call record files under `records/<session_id>/`
 - assembled `ModelTurnRequest` capture
 - provider payload capture
@@ -59,6 +60,9 @@
 - streaming provider exchange capture including provider payload, raw streamed events, and
   provider-reported usage when available
 - error-path capture for provider failure / timeout / retry exhaustion
+- runtime lifecycle capture for `user_message_appended`, `model_request_started`,
+  `model_response_parsed`, `assistant_tool_call_appended`, `tool_result_appended`,
+  `turn_completed`, and `turn_failed`
 - host defaults derived from `OPENAGENT_ROOT` and optional `OPENAGENT_ROLE_ID`
 - provider failures are also echoed to the local host console with session id, adapter, retry index,
   and the model-io capture root so local debugging does not depend on opening the card output first
@@ -88,6 +92,24 @@ tool result 回写时，这两个视图会故意不同：
   - 对 OpenAI-compatible provider，tool result 会投影成：
     - `{"role":"tool","tool_call_id":"...","content":"..."}`
   - 其中 `content` 是 provider-facing string payload，不再保留 canonical `metadata`
+
+tool replay 现在也会把 assistant 的 tool-call 决策先写回 canonical transcript：
+
+- `assembled_request.messages`
+  - 会保留 assistant tool-call message，再跟随对应的 tool result message
+  - assistant tool call 使用 provider-neutral `metadata.tool_calls`
+- `provider_projected_messages`
+  - 会把 assistant tool-call message 投影成 provider wire format
+  - 对 OpenAI-compatible provider，这意味着 assistant message 中会带 `tool_calls`，随后
+    的 tool result 继续使用 `tool_call_id`
+
+排查多轮 tool loop 时，建议同时看两份 append-only 证据：
+
+- `index.jsonl`
+  - 看单次 model request 的 canonical messages、provider-facing payload、parsed response
+- `turn-lifecycle.jsonl`
+  - 看这一轮 turn 中 user message、assistant tool-call append、tool result append、下一次
+    model request 之间的时间顺序
 
 ### 当前不支持
 

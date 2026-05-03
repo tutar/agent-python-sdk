@@ -105,6 +105,53 @@ def _response_model_name(tool_name: str) -> str:
     return cleaned or "Tool"
 
 
+def _metadata_tool_calls(metadata: Mapping[str, object]) -> list[JsonObject]:
+    raw_value = metadata.get("tool_calls")
+    if not isinstance(raw_value, list):
+        return []
+    return [dict(item) for item in raw_value if isinstance(item, dict)]
+
+
+def _openai_tool_call_payload(tool_call: Mapping[str, object]) -> JsonObject:
+    tool_name = str(
+        tool_call.get("tool_name", tool_call.get("name", tool_call.get("function", "")))
+    ).strip()
+    if not tool_name:
+        raise ProviderError("assistant tool replay is missing a tool name")
+    arguments = tool_call.get("arguments", {})
+    if not isinstance(arguments, dict):
+        arguments = {}
+    call_id = tool_call.get("call_id") or tool_call.get("tool_use_id") or tool_call.get("id")
+    payload: JsonObject = {
+        "type": "function",
+        "function": {
+            "name": tool_name,
+            "arguments": json.dumps(arguments, ensure_ascii=False, separators=(",", ":")),
+        },
+    }
+    if call_id is not None:
+        payload["id"] = str(call_id)
+    return payload
+
+
+def _anthropic_tool_use_block(tool_call: Mapping[str, object]) -> JsonObject:
+    tool_name = str(
+        tool_call.get("tool_name", tool_call.get("name", tool_call.get("function", "")))
+    ).strip()
+    if not tool_name:
+        raise ProviderError("assistant tool replay is missing a tool name")
+    arguments = tool_call.get("arguments", {})
+    if not isinstance(arguments, dict):
+        arguments = {}
+    call_id = tool_call.get("call_id") or tool_call.get("tool_use_id") or tool_call.get("id")
+    return {
+        "type": "tool_use",
+        "id": str(call_id) if call_id is not None else f"toolu_{tool_name}",
+        "name": tool_name,
+        "input": cast(JsonValue, arguments),
+    }
+
+
 @cache
 def _action_model_bases() -> tuple[type["BaseModel"], type["BaseModel"]]:
     BaseModel, _, _, _ = _import_pydantic()
@@ -579,6 +626,19 @@ class InstructorModelAdapter:
                     payload["tool_call_id"] = str(tool_call_id)
                 messages.append(payload)
                 continue
+            if role == "assistant":
+                tool_calls = _metadata_tool_calls(metadata_dict)
+                if tool_calls:
+                    payload = {
+                        "role": "assistant",
+                        "tool_calls": cast(
+                            JsonValue,
+                            [_openai_tool_call_payload(tool_call) for tool_call in tool_calls],
+                        ),
+                        "content": str(content) if content is not None else "",
+                    }
+                    messages.append(payload)
+                    continue
             messages.append({"role": role, "content": str(content)})
         if system_fragments:
             messages.insert(
@@ -636,6 +696,15 @@ class InstructorModelAdapter:
                             ],
                         }
                     )
+                    continue
+            if role == "assistant":
+                tool_calls = _metadata_tool_calls(metadata_dict)
+                if tool_calls:
+                    blocks: list[JsonObject] = []
+                    if str(content).strip():
+                        blocks.append({"type": "text", "text": str(content)})
+                    blocks.extend(_anthropic_tool_use_block(tool_call) for tool_call in tool_calls)
+                    messages.append({"role": "assistant", "content": cast(JsonValue, blocks)})
                     continue
             messages.append({"role": role, "content": str(content)})
         payload: JsonObject = {

@@ -682,7 +682,6 @@ def test_local_runtime_defaults_to_builtin_tool_baseline(tmp_path: Path) -> None
     file_names = {record.tool_name for record in file_backed.tools.list_tool_records()}
 
     expected = {
-        "Agent",
         "Read",
         "Write",
         "Edit",
@@ -694,6 +693,19 @@ def test_local_runtime_defaults_to_builtin_tool_baseline(tmp_path: Path) -> None
         "AskUserQuestion",
     }
     assert expected.issubset(file_names)
+    assert "Agent" not in file_names
+
+
+def test_local_runtime_can_opt_in_agent_tool(tmp_path: Path) -> None:
+    file_backed = create_file_runtime(
+        model=object(),
+        session_root=str(tmp_path / "sessions"),
+        include_agent_tool=True,
+    )
+
+    file_names = {record.tool_name for record in file_backed.tools.list_tool_records()}
+
+    assert "Agent" in file_names
 
 def test_minimal_local_code_edit_toolset_exposes_only_core_workspace_tools(tmp_path: Path) -> None:
     tool_names = {tool.name for tool in create_local_code_edit_toolset(root=str(tmp_path))}

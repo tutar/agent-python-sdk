@@ -183,6 +183,21 @@ class RalphLoop:
         self.harness._append_tool_results(session, tool_results)
 
         request = self.harness.build_model_input(session, [])
+        request.request_metadata["trigger"] = "approval_continuation"
+        request.request_metadata["turn_iteration"] = 1
+        request.request_metadata["turn_id"] = turn_task_id
+        self.state.request_metadata = dict(request.request_metadata)
+        self.harness._capture_model_io_lifecycle(
+            session=session,
+            event_type="model_request_started",
+            payload={
+                "request_messages_before_projection": [
+                    dict(message) for message in request.messages if isinstance(message, dict)
+                ],
+                "trigger": "approval_continuation",
+                "turn_iteration": 1,
+            },
+        )
         response, _, _, _ = self.harness._run_model_once(
             request=request,
             session=session,
@@ -294,6 +309,11 @@ class RalphLoop:
             )
         )
         session.messages.append(self.harness._new_session_message(role="user", content=input))
+        self.harness._capture_model_io_lifecycle(
+            session=session,
+            event_type="user_message_appended",
+            payload={"content": input},
+        )
         self.state.messages = [message.to_dict() for message in session.messages]
         yield self.harness._append_event(
             session,
@@ -338,6 +358,23 @@ class RalphLoop:
                 return
 
             request = self.harness.build_model_input(session, [])
+            request.request_metadata["trigger"] = (
+                "initial_user_turn" if iteration == 0 else "tool_continuation"
+            )
+            request.request_metadata["turn_iteration"] = iteration + 1
+            request.request_metadata["turn_id"] = turn_task_id
+            self.state.request_metadata = dict(request.request_metadata)
+            self.harness._capture_model_io_lifecycle(
+                session=session,
+                event_type="model_request_started",
+                payload={
+                    "request_messages_before_projection": [
+                        dict(message) for message in request.messages if isinstance(message, dict)
+                    ],
+                    "trigger": str(request.request_metadata["trigger"]),
+                    "turn_iteration": iteration + 1,
+                },
+            )
             try:
                 handled, streamed_events = self.harness._run_model_with_retries(
                     request=request,
@@ -505,6 +542,19 @@ class RalphLoop:
                 return
 
             self.harness._ensure_tool_call_ids(handled.tool_calls)
+            self.harness._append_assistant_tool_calls(
+                session,
+                assistant_message=handled.assistant_message,
+                tool_calls=handled.tool_calls,
+            )
+            self.harness._capture_model_io_lifecycle(
+                session=session,
+                event_type="assistant_tool_call_appended",
+                payload={
+                    "assistant_message": handled.assistant_message,
+                    "tool_calls": [tool_call.to_dict() for tool_call in handled.tool_calls],
+                },
+            )
             self.state.transition = "tool_execution"
             tool_use_count += len(handled.tool_calls)
 

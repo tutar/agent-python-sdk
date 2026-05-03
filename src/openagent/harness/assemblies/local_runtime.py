@@ -60,7 +60,7 @@ def create_file_runtime_assembly(
     model: ModelProviderAdapter,
     session_root: str,
     tools: list[ToolDefinition] | None = None,
-    include_agent_tool: bool = True,
+    include_agent_tool: bool = False,
     include_skill_tool: bool = True,
     observability: AgentObservability | None = None,
     model_io_root: str | None = None,

@@ -54,9 +54,10 @@ class FakeTool:
 @dataclass(slots=True)
 class ScriptedModel:
     responses: list[ModelTurnResponse]
+    last_request: ModelTurnRequest | None = None
 
     def generate(self, request: ModelTurnRequest) -> ModelTurnResponse:
-        del request
+        self.last_request = request
         return self.responses.pop(0)
 
 
@@ -161,6 +162,15 @@ def test_simple_harness_tool_roundtrip(tmp_path) -> None:
         RuntimeEventType.TURN_COMPLETED,
     ]
     assert echo.seen_arguments == [{"text": "payload"}]
+    messages = session_store.load_session("sess_tool").messages
+    assert [message.role for message in messages] == ["user", "assistant", "tool", "assistant"]
+    assert messages[1].metadata["tool_calls"] == [
+        {"tool_name": "echo", "arguments": {"text": "payload"}, "call_id": "toolu_1"}
+    ]
+    assert model.last_request is not None
+    assert model.last_request.messages[1]["role"] == "assistant"
+    assert model.last_request.messages[1]["metadata"]["tool_calls"][0]["call_id"] == "toolu_1"
+    assert model.last_request.messages[2]["role"] == "tool"
 
 
 def test_simple_harness_continues_after_websearch_backend_failure(tmp_path) -> None:
@@ -226,9 +236,9 @@ def test_simple_harness_skips_empty_assistant_event_before_tool_failure(tmp_path
         RuntimeEventType.TURN_STARTED,
         RuntimeEventType.TURN_FAILED,
     ]
-    assert [message.role for message in session_store.load_session("sess_tool_fail").messages] == [
-        "user"
-    ]
+    messages = session_store.load_session("sess_tool_fail").messages
+    assert [message.role for message in messages] == ["user", "assistant"]
+    assert messages[1].metadata["tool_calls"][0]["tool_name"] == "Bash"
 
 
 def test_simple_harness_skips_nonempty_assistant_event_when_model_also_requests_tool(
@@ -266,7 +276,9 @@ def test_simple_harness_skips_nonempty_assistant_event_when_model_also_requests_
         RuntimeEventType.TURN_COMPLETED,
     ]
     messages = session_store.load_session("sess_tool_preface").messages
-    assert [message.role for message in messages] == ["user", "tool", "assistant"]
+    assert [message.role for message in messages] == ["user", "assistant", "tool", "assistant"]
+    assert messages[1].content == "Let me check that for you."
+    assert messages[1].metadata["tool_calls"][0]["tool_name"] == "echo"
     assert messages[-1].content == "tool completed"
 
 

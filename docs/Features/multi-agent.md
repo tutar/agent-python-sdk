@@ -57,9 +57,12 @@ delegated subagent 现在默认继承 parent agent 的 `role_id`，因此：
 
 ## Builtin Agent Tool
 
-默认 local runtime 现在会注入 builtin `Agent` tool。
+普通 local runtime 默认不会注入 builtin `Agent` tool。
 
-这层默认注入由 runtime assembly 负责，不由 host 重复装配。
+只有明确需要 delegation / sub-agent 能力的 runtime，才应显式开启
+`include_agent_tool=True`。
+
+这层显式注入由 runtime assembly 负责，不由 host 重复装配。
 
 它会把调用转成 `DelegatedAgentInvocation`，并根据 `run_in_background` 选择：
 
